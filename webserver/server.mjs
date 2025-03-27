@@ -1,23 +1,53 @@
 // Import the HTTP module using ESM syntax
-import http from 'http';
+import pg from 'pg'
 
-const hostname = '127.0.0.1';
-const port = 3000;
+import express from 'express';
+import axios from 'axios';
 
-// Create the server
-const server = http.createServer((req, res) => {
-    res.statusCode = 200;
-    res.setHeader('Content-Type', 'text/plain');
-    res.end('Hello, World!\n');
+const app = express();
+const PORT = 3000;
+
+// Middleware to parse JSON request bodies
+app.use(express.json());
+
+// Home Route
+app.get('/', (req, res) => {
+    res.send('Welcome to the Axios Node.js Server with ESM!');
+});
+
+// GET: Fetching data from an external API
+app.get('/api/posts', async (req, res) => {
+    try {
+        const response = await axios.get('https://jsonplaceholder.typicode.com/posts');
+        res.json(response.data);
+    } catch (error) {
+        console.error('Error fetching posts:', error);
+        res.status(500).send('Error fetching data.');
+    }
+});
+
+// POST: Sending data to an external API
+app.post('/api/create', async (req, res) => {
+    try {
+        const { title, body, userId } = req.body;
+        const response = await axios.post('https://jsonplaceholder.typicode.com/posts', {
+            title,
+            body,
+            userId,
+        });
+        res.json(response.data);
+    } catch (error) {
+        console.error('Error creating post:', error);
+        res.status(500).send('Error creating data.');
+    }
 });
 
 // Start the server
-server.listen(port, hostname, () => {
-    console.log(`Server running at http://${hostname}:${port}/`);
+app.listen(PORT, () => {
+    console.log(`✅ Server running on http://localhost:${PORT}`);
 });
 
-repl.repl.ignoreUndefined=true
-
+/*
 const {InfluxDB, Point} = require('@influxdata/influxdb-client')
 
 const token = ''
@@ -43,3 +73,19 @@ for (let i = 0; i < 5; i++) {
         writeClient.flush()
     }, 5000)
 }
+*/
+/*
+const { Client } = pg
+const client = new Client({
+    user: 'postgres',
+    password: 'Passw0rd',
+    host: 'localhost',
+    port: 8087,
+    database: 'postgres',
+})
+await client.connect()
+
+const res = await client.query('SELECT $1::text as message', ['Hello world!'])
+console.log(res.rows[0].message) // Hello world!
+await client.end()
+*/
