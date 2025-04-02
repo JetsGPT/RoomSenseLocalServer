@@ -13,13 +13,13 @@ const url = 'http://localhost:8086'
 const influxClient = new InfluxDB({url, token})
 
 const { Client } = pg
-const pgClient = new Client({
+const options = {
     user: 'postgres',
     password: 'Passw0rd',
     host: 'localhost',
     port: 5555,
     database: 'postgres',
-})
+}
 
 
 // Middleware to parse JSON request bodies
@@ -57,17 +57,19 @@ app.get('/sensor/data', (req, res) => {
 });
 
 
-app.post('/user/login', async (req, res) => {
-    //const {username, password} = req.body;
+app.get('/user/all', async (req, res) => {
+    fetchUsers().then(users => {
+        console.log('Fetched Users:', users);
+        res.status(200).send(users)
+    });
+})
 
-    res.status(200).send("yes")
-    await pgClient.connect()
-
-    const response = await pgClient.query('SELECT $1::text as message', ['Hello world!'])
-
-    res.status(200).send(response); // Hello world!
-
-    await pgClient.end()
+app.post('/user/register', async (req, res) => {
+    let {user, password} = req.body;
+    createUser(user, password).then(result => {
+        console.log('Created user: ', result);
+        res.status(200).send(result)
+    });
 })
 
 /*
@@ -112,6 +114,39 @@ const res = await client.query('SELECT $1::text as message', ['Hello world!'])
 console.log(res.rows[0].message) // Hello world!
 await client.end()
 */
+
+async function createUser(username, password) {
+    const pgClient = new Client(options);
+    try {
+        const insertString = username + ', ' + Date.now() + ", " + 'admin, ' + password;
+        await pgClient.connect();
+        const result = await pgClient.query(
+            'INSERT INTO users (username, password, created_at) VALUES ($1, $2, NOW()) RETURNING *',
+            [username, password],
+        );
+        console.log(result)
+        return result
+    } catch (error) {
+        console.error('Error fetching users:', error);
+    } finally {
+        await pgClient.end();
+    }
+}
+
+async function fetchUsers() {
+    const pgClient = new Client(options);
+    try {
+        await pgClient.connect();
+        const result = await pgClient.query('SELECT * FROM users');
+        const users = result.rows;
+        console.log(users);
+        return users;
+    } catch (error) {
+        console.error('Error fetching users:', error);
+    } finally {
+        await pgClient.end();
+    }
+}
 
 function writeTestData(){
     let org = `RoomSense`
