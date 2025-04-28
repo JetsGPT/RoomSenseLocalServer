@@ -1,0 +1,51 @@
+services:
+  webserver:
+    build: .
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      PGUSER: postgres
+      PGPASSWORD: password
+      PGDATABASE: user
+      INFLUX_URL: http://influxdb:8086
+      INFLUX_TOKEN: adminToken
+      INFLUX_ORG: RoomSense
+      INFLUX_BUCKET: temperature
+    links:
+      - "postgres:users"
+      - "influxdb:sensors"
+    ports:
+      - "8081:8081"
+    depends_on:
+      - postgres
+      - influxdb
+  postgres:
+    image: postgres:17.4
+    restart: unless-stopped
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: user
+  influxdb:
+    image: influxdb:2.7.11
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    restart: unless-stopped
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: admin123
+      DOCKER_INFLUXDB_INIT_ORG: RoomSense
+      DOCKER_INFLUXDB_INIT_BUCKET: temperature
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: adminToken
+
+volumes:
+  pgdata:
+  influxdb_data:

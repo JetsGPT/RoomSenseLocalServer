@@ -1,0 +1,11 @@
+FROM node:20.11.1
+WORKDIR /webserver
+
+COPY package.json package.json
+COPY package-lock.json package-lock.json
+
+RUN npm install
+
+COPY . .
+
+CMD [ "node", "app.js"]

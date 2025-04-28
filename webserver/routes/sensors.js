@@ -4,8 +4,9 @@ const router = express.Router();
 
 import { InfluxDB, Point } from '@influxdata/influxdb-client';
 
-const token = 'TR6vWva87Bs1YGnAEQlR2gmO-inil9P_rUqNMhS1GQfgo97zBAapEx9_S4vOIwRKS6LS82vNWPpej6alqpGX-A=='
-const url = 'http://localhost:8086'
+const token = process.env.INFLUX_TOKEN;
+const url = process.env.INFLUX_URL;
+const organisation = process.env.INFLUX_ORG;
 
 const influxClient = new InfluxDB({url, token})
 
@@ -14,9 +15,9 @@ const influxClient = new InfluxDB({url, token})
 router.get('/sensor/data', (req, res) => {
     console.log("A read attempt has been made");
     let response = '';  // Initialize as an empty string
-    let org = `RoomSense`;
+    let org = organisation;
     let queryClient = influxClient.getQueryApi(org);
-    let fluxQuery = `from(bucket: "Temp")
+    let fluxQuery = `from(bucket: "temperature")
  |> range(start: -10m)
  |> filter(fn: (r) => r._measurement == "measurement1")`;
 
@@ -39,7 +40,7 @@ router.get('/sensor/data', (req, res) => {
 
 function writeTestData(){
     let org = `RoomSense`
-    let bucket = `Temp`
+    let bucket = `temperature`
 
     let writeClient = influxClient.getWriteApi(org, bucket, 'ns')
 

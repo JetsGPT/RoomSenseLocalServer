@@ -5,12 +5,13 @@ const router = express.Router();
 
 const { Client } = pg
 const options = {
-    user: 'postgres',
-    password: 'Passw0rd',
-    host: 'localhost',
-    port: 5555,
-    database: 'postgres',
-}
+    user: process.env.PGUSER || 'postgres',
+    password: process.env.PGPASSWORD || 'password',
+    host: process.env.PGHOST || 'postgres',
+    port: process.env.PGPORT ? parseInt(process.env.PGPORT) : 5432,
+    database: process.env.PGDATABASE || 'user',
+};
+
 
 router.get('/all', async (req, res) => {
     fetchUsers().then(users => {

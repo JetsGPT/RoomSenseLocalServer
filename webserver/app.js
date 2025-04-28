@@ -2,11 +2,11 @@ import express from 'express';
 import cors from 'cors';
 
 const app = express();
-const PORT = 3000;
+const PORT = 8081   ;
 
 import userRouter from './routes/users.js';
 import sensorRouter from './routes/sensors.js';
-import testingRouter from './routes/testings.js';
+import testingRouter from './routes/testing.js';
 
 app.use(express.json());
 app.use(cors({
