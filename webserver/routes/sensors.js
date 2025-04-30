@@ -1,5 +1,5 @@
 import express from 'express';
-import influx from '@influxdata/influxdb-client';
+import {InfluxDB, Point, } from '@influxdata/influxdb-client';
 
 const router = express.Router();
 
@@ -8,7 +8,7 @@ const url = process.env.INFLUX_URL;
 const organisation = process.env.INFLUX_ORG;
 const bucket = process.env.INFLUX_BUCKET;
 
-const influxClient = new influx.InfluxDB({url, token})
+const influxClient = new InfluxDB({url, token})
 
 
 
@@ -46,17 +46,6 @@ router.get('/writeTestData', (req,res)=> {
     }
 })
 
-router.get('/ping', async (req, res) => {
-    try {
-        await influxClient.ping(5000)
-        res.status(200).send("It worked")
-    }
-    catch (err){
-        res.status(500).send(err.message || 'Unknown error');
-
-    }
-})
-
 router.get('/', (req, res) => {
     console.log("Hello World has been sent.")
     res.status(200).send("Hello World!")
@@ -67,7 +56,7 @@ function writeTestData(){
     let writeClient = influxClient.getWriteApi(organisation, bucket, 'ns')
 
     for (let i = 0; i < 5; i++) {
-        let point = new influx.Point('measurement1')
+        let point = new Point('measurement1')
             .tag('tagname1', 'tagvalue1')
             .intField('field1', i)
 
