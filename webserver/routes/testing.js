@@ -1,8 +1,9 @@
 import express from 'express';
+import {requireLogin} from "../auth/auth.js";
 
 const router = express.Router();
-
-router.get('/', (req, res) => {
+// test für session
+router.get('/',requireLogin, (req, res) => {
     console.log("Hello World has been sent.")
     res.status(200).send("Hello World!")
 });

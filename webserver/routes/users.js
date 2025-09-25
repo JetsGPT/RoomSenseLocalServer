@@ -40,6 +40,15 @@ router.post('/login', async (req, res) => {
         if (!authUser) {
             return res.status(401).send({ error: 'Invalid credentials' });
         }
+
+        // session
+        req.session.user = {
+            id: authUser.id,
+            username: authUser.username,
+            role: authUser.role,
+        };
+        //---
+
         res.status(200).send(authUser);
     } catch (error) {
         console.error('Error during login:', error);

@@ -12,8 +12,11 @@
   "dependencies": {
     "@influxdata/influxdb-client": "^1.35.0",
     "axios": "^1.8.4",
+    "connect-pg-simple": "^10.0.0",
     "cors": "^2.8.5",
+    "dotenv": "^17.2.2",
     "express": "^4.21.2",
+    "express-session": "^1.18.2",
     "pg": "^8.14.1"
   },
   "type": "module"
