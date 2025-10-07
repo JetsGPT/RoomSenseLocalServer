@@ -107,4 +107,33 @@ async function fetchUsers() {
     }
 }
 
+router.post('/logout', (req, res) => {
+    req.session.destroy(err => {
+      if (err) return res.status(500).send({ error: 'Logout failed' });
+      res.clearCookie('connect.sid'); 
+      res.status(200).send({ message: 'Logged out' });
+    });
+  });
+
+router.get('/me', requireLogin, async (req, res) => {
+    try {
+        const pgClient = new Client(options);
+        await pgClient.connect();
+        const result = await pgClient.query(
+            'SELECT id, username, role, created_at FROM users WHERE id = $1 LIMIT 1',
+            [req.session.user.id]
+        );
+        await pgClient.end();
+
+        if (result.rows.length === 0) {
+            return res.status(404).send({ error: 'User not found' });
+        }
+
+        res.status(200).send(result.rows[0]);
+    } catch (error) {
+        console.error('Error fetching current user:', error);
+        res.status(500).send({ error: 'Internal server error' });
+    }
+});
+
 export default router;
