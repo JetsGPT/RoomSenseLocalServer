@@ -14,7 +14,7 @@ const options = {
 };
 
 
-router.get('/all', async (req, res) => {
+router.get('/all', requireLogin, requireRole('admin'), async (req, res) => {
     fetchUsers().then(users => {
         console.log('Fetched Users:', users);
         res.status(200).send(users)
