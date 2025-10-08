@@ -1,5 +1,6 @@
 import express from 'express';
 import pg from 'pg'
+import { requireLogin, requireRole } from '../auth/auth.js';
 
 const router = express.Router();
 
