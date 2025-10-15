@@ -41,13 +41,14 @@ app.use(
     session({
         store: new PgSession({
             pool,
-            tableName: "session",createTableIfMissing: true // wenn sie nicht existiert wird sie automatisch erstellt
+            tableName: "session",createTableIfMissing: true, // wenn sie nicht existiert wird sie automatisch erstellt
+            pruneSessionInterval: 60*60
         }),
         secret: process.env.SESSION_SECRET,
         resave: false,
         saveUninitialized: false,
         cookie: {
-            maxAge: 1000 * 60 * 60 * 2, // 2 hours
+            maxAge: 1000 * 60 * 60 * 2, 
             secure: true,
             httpOnly: true,
             sameSite: "lax"
