@@ -12,7 +12,7 @@ services:
       INFLUX_ORG: ${INFLUX_ORG}
       INFLUX_BUCKET: ${INFLUX_BUCKET}
     links:
-      - "postgres:users"
+      - "postgres:postgres"
       - "influxdb:sensors"
     ports:
       - "8081:8081"
