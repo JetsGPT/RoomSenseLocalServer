@@ -32,7 +32,7 @@ const app = express();
 const PORT = 8081   ;
 
 import userRouter from './routes/users.js';
-import sensorRouter from './routes/sensors.js';
+import sensorRouter from './routes/sensors/index.js';
 import testingRouter from './routes/testing.js';
 
 // session
