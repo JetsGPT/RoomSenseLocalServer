@@ -11,7 +11,8 @@ Requires:
 Example usage:
     python multi_ble_to_mqtt.py
 """
-# TODO: This is chatgpt code, understand it and make it better for our use, also: descriptor and second characteristic
+# TODO: This is ChatGPT code, understand it and make it better for our use, also: descriptor and second characteristic
+# TODO: Also, this is for asyncio-mqtt, but that is depreciated, so have to update it to aiomqtt
 
 import asyncio
 import logging
@@ -19,14 +20,16 @@ import struct
 from typing import Dict, Optional
 
 from bleak import BleakClient, BleakScanner, BleakError
-from asyncio_mqtt import Client as MQTTClient, MqttError
+from aiomqtt import Client as MQTTClient, MqttError
 
 # ---------- Configuration ----------
-CUSTOM_SERVICE_UUID = "0000feed-0000-1000-8000-00805f9b34fb"
-CUSTOM_CHAR_UUID =    "0000beef-0000-1000-8000-00805f9b34fb"
+CUSTOM_SERVICE_UUID = "cfa59c64-aeaf-42ac-bf8d-bc4a41ef5b0c"
+CUSTOM_SENSOR_CHAR_UUID = "49c92b70-42f5-49c3-bc38-5fe05b3df8e0"
+CUSTOM_SENSOR_DESCRIPTOR_UUID = "3bee5811-4c6c-449a-b368-0b1391c6c1dc"
+CUSTOM_BOX_CHAR_UUID = "9d62dc0c-b4ef-40c4-9383-15bdc16870de"
 
-SCAN_INTERVAL = 10.0  # seconds between rescans
-MQTT_BROKER = "localhost"  # your Mosquitto host/IP
+SCAN_INTERVAL = 10.0
+MQTT_BROKER = "localhost"
 MQTT_PORT = 1883
 MQTT_TOPIC_BASE = "ble/devices"  # messages will go to ble/devices/<address>
 MQTT_USERNAME = None  # optional
@@ -104,8 +107,8 @@ class BLEPeripheral:
 
                 self.client.set_disconnected_callback(_on_disconnect)
 
-                await self.client.start_notify(CUSTOM_CHAR_UUID, self._on_notify)
-                log.info("[%s] Subscribed to %s", self.address, CUSTOM_CHAR_UUID)
+                await self.client.start_notify(CUSTOM_SENSOR_CHAR_UUID, self._on_notify)
+                log.info("[%s] Subscribed to %s", self.address, CUSTOM_SENSOR_CHAR_UUID)
                 backoff = 1
 
                 while self.client.is_connected and not self._stopping:
@@ -113,7 +116,7 @@ class BLEPeripheral:
 
                 try:
                     if self.client.is_connected:
-                        await self.client.stop_notify(CUSTOM_CHAR_UUID)
+                        await self.client.stop_notify(CUSTOM_SENSOR_CHAR_UUID)
                 except Exception:
                     pass
                 try:
@@ -140,7 +143,7 @@ class BLEPeripheral:
         self._stopping = True
         if self.client and self.client.is_connected:
             try:
-                await self.client.stop_notify(CUSTOM_CHAR_UUID)
+                await self.client.stop_notify(CUSTOM_SENSOR_CHAR_UUID)
             except Exception:
                 pass
             try:
