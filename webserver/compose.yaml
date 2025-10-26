@@ -15,7 +15,7 @@ services:
       - "postgres:postgres"
       - "influxdb:sensors"
     ports:
-      - "8081:8081"
+      - "8081:8081"  # HTTPS port for local network access
     depends_on:
       - postgres
       - influxdb
