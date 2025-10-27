@@ -49,6 +49,23 @@ services:
       INFLUXD_TLS_CERT: /certs/influxdb-selfsigned.crt
       INFLUXD_TLS_KEY: /certs/influxdb-selfsigned.key
 
+  nginx-proxy-manager:
+    image: 'jc21/nginx-proxy-manager:latest'
+    restart: unless-stopped
+    ports:
+      - '80:80'      # HTTP
+      - '81:81'      # Admin UI
+      - '443:443'    # HTTPS
+    volumes:
+      - npm_data:/data
+      - npm_letsencrypt:/etc/letsencrypt
+    environment:
+      DB_SQLITE_FILE: "/data/database.sqlite"
+    depends_on:
+      - webserver
+
 volumes:
   pgdata:
   influxdb_data:
+  npm_data:
+  npm_letsencrypt:

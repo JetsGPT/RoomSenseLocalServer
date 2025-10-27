@@ -16,6 +16,8 @@ const options = {
 
 
 
+
+
 router.get('/all', requireLogin, requireRole('admin'), async (req, res) => {
     fetchUsers().then(users => {
         console.log('Fetched Users:', users);
@@ -50,9 +52,16 @@ router.post('/login', async (req, res) => {
             username: authUser.username,
             role: authUser.role,
         };
+        
+        // Explicitly save the session
+        req.session.save((err) => {
+            if (err) {
+                console.error('Session save error:', err);
+                return res.status(500).send({ error: 'Session save failed' });
+            }
+            res.status(200).send(authUser);
+        });
         //---
-
-        res.status(200).send(authUser);
     } catch (error) {
         console.error('Error during login:', error);
         res.status(500).send({ error: 'Login failed' });
