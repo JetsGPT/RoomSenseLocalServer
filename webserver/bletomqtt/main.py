@@ -1,18 +1,4 @@
 #!/usr/bin/env python3
-"""
-multi_ble_to_mqtt.py
-
-Discovers multiple BLE peripherals exposing the same custom GATT characteristic,
-subscribes to notifications, and republishes them as MQTT messages.
-
-Requires:
-    pip install bleak asyncio-mqtt
-
-Example usage:
-    python multi_ble_to_mqtt.py
-"""
-# TODO: This is ChatGPT code, understand it and make it better for our use, also: descriptor and second characteristic
-# TODO: Also, this is for asyncio-mqtt, but that is depreciated, so have to update it to aiomqtt
 
 import asyncio
 import logging
@@ -20,7 +6,7 @@ import struct
 from typing import Dict, Optional
 
 from bleak import BleakClient, BleakScanner, BleakError
-from aiomqtt import Client as MQTTClient, MqttError
+import aiomqtt
 
 # ---------- Configuration ----------
 CUSTOM_SERVICE_UUID = "cfa59c64-aeaf-42ac-bf8d-bc4a41ef5b0c"
@@ -31,8 +17,8 @@ CUSTOM_BOX_CHAR_UUID = "9d62dc0c-b4ef-40c4-9383-15bdc16870de"
 SCAN_INTERVAL = 10.0
 MQTT_BROKER = "localhost"
 MQTT_PORT = 1883
-MQTT_TOPIC_BASE = "ble/devices"  # messages will go to ble/devices/<address>
-MQTT_USERNAME = None  # optional
+MQTT_TOPIC_BASE = "ble/devices"
+MQTT_USERNAME = None
 MQTT_PASSWORD = None
 # -----------------------------------
 
@@ -40,60 +26,65 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 log = logging.getLogger("ble_to_mqtt")
 
 
-def parse_payload(b: bytes) -> dict:
-    """
-    Parse the BLE notification payload into a dictionary for MQTT.
-    Adjust this to match your peripheral's data format.
-    """
-    if not b:
-        return {"raw": None}
-
-    # Example: try to parse struct (uint32 + float)
-    if len(b) == 8:
-        try:
-            u32, fl = struct.unpack("<If", b)
-            return {"uint32": u32, "float": fl}
-        except Exception:
-            pass
-
-    # Try UTF-8
-    try:
-        s = b.decode("utf-8").strip()
-        return {"text": s}
-    except Exception:
-        pass
-
-    # Fallback: hex string
-    return {"hex": " ".join(f"{x:02x}" for x in b)}
-
-
 class BLEPeripheral:
-    """Handles connection and data forwarding for one BLE peripheral."""
-
-    def __init__(self, address: str, name: str, mqtt_client: MQTTClient):
+    def __init__(self, address: str, name: str, mqtt_client: aiomqtt.Client):
         self.address = address
         self.name = name or "unknown"
         self.client: Optional[BleakClient] = None
         self.mqtt = mqtt_client
         self._task: Optional[asyncio.Task] = None
         self._stopping = False
+        self.sensor_type: Optional[str] = None
+        self.box_address: Optional[str] = None
+
+    async def _read_metadata(self):
+        try:
+            desc_data = await self.client.read_gatt_descriptor(CUSTOM_SENSOR_DESCRIPTOR_UUID)
+            self.sensor_type = desc_data.decode(errors="ignore").strip()
+
+            box_data = await self.client.read_gatt_char(CUSTOM_BOX_CHAR_UUID)
+            self.box_address = box_data.decode(errors="ignore").strip()
+
+            log.info("[%s] Descriptor: %s | Box: %s", self.address, self.sensor_type, self.box_address)
+        except Exception as e:
+            log.warning("[%s] Could not read descriptor/box info: %s", self.address, e)
 
     async def _on_notify(self, sender: int, data: bytearray):
-        parsed = parse_payload(bytes(data))
+        parsed = self._parse_sensor_value(data)
         payload = {
-            "address": self.address,
-            "name": self.name,
-            "data": parsed,
+            "ble_address": self.address,
+            "box_address": self.box_address or "unknown",
+            "sensor_type": self.sensor_type or "unknown",
+            "sensor_value": parsed,
         }
-        topic = f"{MQTT_TOPIC_BASE}/{self.address.replace(':', '').lower()}"
+
+        topic = f"{MQTT_TOPIC_BASE}/{self.box_address or self.address.replace(':', '').lower()}"
         try:
-            await self.mqtt.publish(topic, str(payload))
-            log.info("[%s] → MQTT %s : %s", self.address, topic, parsed)
-        except MqttError as e:
+            await self.mqtt.publish(topic, str(payload).encode())
+            log.info("[%s] → MQTT %s : %s", self.address, topic, payload)
+        except aiomqtt.MqttError as e:
             log.warning("[%s] MQTT publish error: %s", self.address, e)
 
+    def _parse_sensor_value(self, data: bytes):
+        if not data:
+            return None
+        try:
+            if len(data) == 4:
+                val = struct.unpack("<f", data)[0]
+                return round(val, 3)
+            elif len(data) == 2:
+                return struct.unpack("<h", data)[0]
+            elif len(data) == 8:
+                return struct.unpack("<d", data)[0]
+            else:
+                return int.from_bytes(data, byteorder="little", signed=True)
+        except Exception:
+            try:
+                return float(data.decode().strip())
+            except Exception:
+                return None
+
     async def connect_and_listen(self):
-        """Maintain BLE connection and forward notifications."""
         backoff = 1
         while not self._stopping:
             try:
@@ -105,7 +96,9 @@ class BLEPeripheral:
                 def _on_disconnect(_client):
                     log.warning("[%s] Disconnected.", self.address)
 
-                self.client.set_disconnected_callback(_on_disconnect)
+                self.client.disconnected_callback = _on_disconnect
+
+                await self._read_metadata()
 
                 await self.client.start_notify(CUSTOM_SENSOR_CHAR_UUID, self._on_notify)
                 log.info("[%s] Subscribed to %s", self.address, CUSTOM_SENSOR_CHAR_UUID)
@@ -155,14 +148,12 @@ class BLEPeripheral:
 
 
 class BLEToMQTTBridge:
-    """Manages discovery and multiple BLE → MQTT pipelines."""
 
     def __init__(self):
         self.peripherals: Dict[str, BLEPeripheral] = {}
         self._stopping = False
 
     async def scan_for_devices(self):
-        """Find devices advertising our target service."""
         log.info("Scanning for devices advertising %s ...", CUSTOM_SERVICE_UUID)
         devices = await BleakScanner.discover(timeout=5.0)
         found = []
@@ -174,14 +165,16 @@ class BLEToMQTTBridge:
         return found
 
     async def run(self):
-        """Run main scan and connect loop with MQTT."""
-        mqtt_kwargs = {"hostname": MQTT_BROKER, "port": MQTT_PORT}
+        mqtt_kwargs = {
+            "hostname": MQTT_BROKER,
+            "port": MQTT_PORT,
+        }
         if MQTT_USERNAME:
             mqtt_kwargs["username"] = MQTT_USERNAME
         if MQTT_PASSWORD:
             mqtt_kwargs["password"] = MQTT_PASSWORD
 
-        async with MQTTClient(**mqtt_kwargs) as mqtt:
+        async with aiomqtt.Client(**mqtt_kwargs) as mqtt:
             log.info("Connected to MQTT broker at %s:%d", MQTT_BROKER, MQTT_PORT)
 
             while not self._stopping:
