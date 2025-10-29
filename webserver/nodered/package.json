@@ -1,0 +1,12 @@
+{
+    "name": "node-red-project",
+    "description": "The gateway from the MQTT broker to the influx database",
+    "version": "0.0.1",
+    "private": true,
+    "dependencies": {
+        "node-red-contrib-influxdb": "~0.7.0"
+    },
+  "scripts": {
+    "start": "node node_modules/node-red/red.js /data/flows.json"
+  }
+}

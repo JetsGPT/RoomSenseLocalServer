@@ -1,0 +1,123 @@
+[
+    {
+        "id": "706edde26cf444dd",
+        "type": "tab",
+        "label": "Flow 1",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "1054c7028636fbd9",
+        "type": "influxdb out",
+        "z": "706edde26cf444dd",
+        "influxdb": "69f23e3431761725",
+        "name": "Influx input",
+        "measurement": "sensor_data",
+        "precision": "",
+        "retentionPolicy": "",
+        "database": "database",
+        "precisionV18FluxV20": "ms",
+        "retentionPolicyV18Flux": "",
+        "org": "RoomSense",
+        "bucket": "sensors_data",
+        "x": 840,
+        "y": 242,
+        "wires": []
+    },
+    {
+        "id": "33b0bff744f80e94",
+        "type": "mqtt in",
+        "z": "706edde26cf444dd",
+        "name": "",
+        "topic": "ble/devices",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "79efcba426ade164",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 444,
+        "y": 242,
+        "wires": [
+            [
+                "6910511b417b34f7"
+            ]
+        ]
+    },
+    {
+        "id": "6910511b417b34f7",
+        "type": "function",
+        "z": "706edde26cf444dd",
+        "name": "function 1",
+        "func": "\nmsg.payload = [{\n    value: msg.payload.value\n},\n{\n    sensor_box: msg.payload.sensor_box,\n    sensor_type: msg.payload.sensor_type\n}];\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 622,
+        "y": 242,
+        "wires": [
+            [
+                "1054c7028636fbd9"
+            ]
+        ]
+    },
+    {
+        "id": "69f23e3431761725",
+        "type": "influxdb",
+        "hostname": "127.0.0.1",
+        "port": 8086,
+        "protocol": "http",
+        "database": "database",
+        "name": "yes",
+        "usetls": false,
+        "tls": "",
+        "influxdbVersion": "2.0",
+        "url": "https://localhost:8086",
+        "timeout": 10,
+        "rejectUnauthorized": false
+    },
+    {
+        "id": "79efcba426ade164",
+        "type": "mqtt-broker",
+        "name": "MQTT Broker",
+        "broker": "localhost",
+        "port": 1883,
+        "clientid": "nodered5046ab69efa5eeef",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "hello",
+        "birthQos": "0",
+        "birthRetain": "true",
+        "birthPayload": "i connected",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "e7ee1b475bf30b0d",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-contrib-influxdb": "0.7.0"
+        }
+    }
+]
