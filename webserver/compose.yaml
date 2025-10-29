@@ -58,6 +58,13 @@ services:
       - ./mqtt:/mosquitto/config
       - ./mosquitto/data:/mosquitto/data
       - ./mosquitto/log:/mosquitto/log
+  blegateway:
+    build: ./bletomqtt
+    container_name: blegateway
+    volumes:
+      - ./bletomqtt:/bletomqtt
+    depends_on:
+      - mosquitto
 
 volumes:
   pgdata:

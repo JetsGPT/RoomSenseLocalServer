@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 
+import sys
 import asyncio
+import time
+
+if sys.platform.startswith("win"):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 import logging
 import struct
 from typing import Dict, Optional
@@ -52,10 +58,9 @@ class BLEPeripheral:
     async def _on_notify(self, sender: int, data: bytearray):
         parsed = self._parse_sensor_value(data)
         payload = {
-            "ble_address": self.address,
-            "box_address": self.box_address or "unknown",
+            "sensor_box": self.box_address or "unknown",
             "sensor_type": self.sensor_type or "unknown",
-            "sensor_value": parsed,
+            "value": parsed,
         }
 
         topic = f"{MQTT_TOPIC_BASE}/{self.box_address or self.address.replace(':', '').lower()}"
