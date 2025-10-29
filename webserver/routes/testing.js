@@ -8,6 +8,25 @@ router.get('/',requireLogin, (req, res) => {
     res.status(200).send("Hello World!")
 });
 
+// Debug session info
+router.get('/session-debug', (req, res) => {
+    console.log('Session debug request:', {
+        sessionID: req.sessionID,
+        session: req.session,
+        cookies: req.headers.cookie,
+        userAgent: req.headers['user-agent'],
+        origin: req.headers.origin,
+        referer: req.headers.referer
+    });
+    res.status(200).json({
+        sessionID: req.sessionID,
+        hasSession: !!req.session,
+        hasUser: !!req.session?.user,
+        user: req.session?.user,
+        cookies: req.headers.cookie
+    });
+});
+
 router.get('/users', (req, res) => {
     res.type('html').send(`<!doctype html>
 <html>

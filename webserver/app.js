@@ -34,9 +34,49 @@ const PORT = 8081   ;
 import userRouter from './routes/users.js';
 import sensorRouter from './routes/sensors/index.js';
 import testingRouter from './routes/testing.js';
-
+app.use(express.json());
+app.use(cors({
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin) return callback(null, true);
+        
+        // Allow localhost, local network IPs, and your domain
+        const allowedOrigins = [
+            'http://localhost:5173',
+            'https://localhost:5173',
+            'https://server.roomsense.duckdns.org',
+            'https://roomsense.duckdns.org',
+            'https://influxdb.roomsense.duckdns.org',
+            'http://server.roomsense.duckdns.org',
+            /^https?:\/\/192\.168\.\d+\.\d+:5173$/,  // Allow any 192.168.x.x IP
+            /^https?:\/\/10\.\d+\.\d+\.\d+:5173$/,   // Allow any 10.x.x.x IP  
+            /^https?:\/\/172\.(1[6-9]|2[0-9]|3[0-1])\.\d+\.\d+:5173$/, // Allow 172.16-31.x.x IPs
+            'capacitor://localhost',
+            'ionic://localhost',
+            'https://localhost',
+        ];
+        
+        const isAllowed = allowedOrigins.some(allowedOrigin => {
+            if (typeof allowedOrigin === 'string') {
+                return origin === allowedOrigin;
+            } else if (allowedOrigin instanceof RegExp) {
+                return allowedOrigin.test(origin);
+            }
+            return false;
+        });
+        
+        if (isAllowed) {
+            callback(null, true);
+        } else {
+            console.log('CORS blocked origin:', origin);
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    credentials: true,
+    optionsSuccessStatus: 200
+}));
 // session
-
+app.set('trust proxy', 1);
 app.use(
     session({
         store: new PgSession({
@@ -51,18 +91,15 @@ app.use(
             maxAge: 1000 * 60 * 60 * 2, 
             secure: true,
             httpOnly: true,
-            sameSite: "lax"
+            sameSite: "none",  // Required for cross-origin requests
+            domain: undefined  // Let browser handle domain automatically
         },
     })
 );
 
 
 
-app.use(express.json());
-app.use(cors({
-    origin: ['http://localhost:5173','https://localhost:5173'], 
-  credentials: true,
-}));
+
 app.use('/api/users', userRouter);
 app.use('/api/sensors', sensorRouter);
 app.use('/testing', testingRouter);
@@ -74,8 +111,9 @@ const httpsOptions = {
     cert: fs.readFileSync('./server.cert'),
 };
 
-https.createServer(httpsOptions, app).listen(PORT, () => {
-    console.log(`✅ HTTPS Server running on https://localhost:${PORT}`);
+https.createServer(httpsOptions, app).listen(PORT, '0.0.0.0', () => {
+    console.log(`✅ HTTPS Server running on https://0.0.0.0:${PORT}`);
+    console.log(`🌐 Access from local network: https://[RASPBERRY_PI_IP]:${PORT}`);
 });
 
 

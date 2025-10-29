@@ -22,16 +22,24 @@ export function writeTestData() {
     const sensorBoxes = ['box_001', 'box_002', 'box_003'];
     const sensorTypes = ['temperature', 'humidity', 'pressure', 'light'];
     
+   
+    const now = new Date();
+    const sixMonthsAgo = new Date(now.getTime() - (6 * 30 * 24 * 60 * 60 * 1000)); // 6 months in milliseconds
+    const timeRange = now.getTime() - sixMonthsAgo.getTime();
+    
     for (let i = 0; i < 20; i++) {
         const sensorBox = sensorBoxes[Math.floor(Math.random() * sensorBoxes.length)];
         const sensorType = sensorTypes[Math.floor(Math.random() * sensorTypes.length)];
         const value = Math.random() * 100; // Random value between 0-100
         
+        // Generate random timestamp within the last 6 months
+        const randomTime = new Date(sixMonthsAgo.getTime() + Math.random() * timeRange);
+        
         let point = new Point('sensor_data')
             .tag('sensor_box', sensorBox)
             .tag('sensor_type', sensorType)
             .floatField('value', value)
-            .timestamp(new Date(Date.now() - (i * 60000))); // Data from last 20 minutes
+            .timestamp(randomTime);
 
         writeClient.writePoint(point);
     }
