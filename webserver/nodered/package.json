@@ -5,8 +5,5 @@
     "private": true,
     "dependencies": {
         "node-red-contrib-influxdb": "~0.7.0"
-    },
-  "scripts": {
-    "start": "node node_modules/node-red/red.js /data/flows.json"
-  }
+    }
 }

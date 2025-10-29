@@ -65,15 +65,22 @@ services:
       - ./bletomqtt:/bletomqtt
     depends_on:
       - mosquitto
+    restart: unless-stopped
   node-red:
     build: ./nodered
     ports:
       - "1880:1880"
     volumes:
-      - ./node-red-data:/data
+      - node-red-data:/data
     depends_on:
       - mosquitto
       - influxdb
+    environment:
+      FLOWS: /data/flows.json
+      NODE_OPTIONS:
+    restart: unless-stopped
+
 volumes:
   pgdata:
   influxdb_data:
+  node-red-data:
