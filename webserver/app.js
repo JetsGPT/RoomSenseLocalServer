@@ -76,7 +76,7 @@ app.use(cors({
     optionsSuccessStatus: 200
 }));
 // session
-app.set('trust proxy', 1);
+// app.set('trust proxy', 1);
 app.use(
     session({
         store: new PgSession({
