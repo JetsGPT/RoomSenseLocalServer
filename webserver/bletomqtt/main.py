@@ -17,7 +17,7 @@ import time
 # ---------- Configuration ----------
 CUSTOM_SERVICE_UUID = "cfa59c64-aeaf-42ac-bf8d-bc4a41ef5b0c".lower()
 CUSTOM_SENSOR_CHAR_UUID = "49c92b70-42f5-49c3-bc38-5fe05b3df8e0".lower()
-CUSTOM_SENSOR_TYPE_CHAR_UUID = "3bee5811-4c6c-449a-b368-0b1391c6c1dc".lower()
+CUSTOM_SENSOR_TYPE_DESC_UUID = "3bee5811-4c6c-449a-b368-0b1391c6c1dc".lower()
 CUSTOM_BOX_CHAR_UUID = "9d62dc0c-b4ef-40c4-9383-15bdc16870de".lower()
 
 TARGET_NAME = "TempSensor01"
@@ -33,6 +33,7 @@ MQTT_PASSWORD = None
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 log = logging.getLogger("ble_to_mqtt")
 
+
 class BLEPeripheral:
     def __init__(self, device, name: str, mqtt_client: aiomqtt.Client):
         self.device = device
@@ -42,17 +43,10 @@ class BLEPeripheral:
         self.mqtt = mqtt_client
         self._task: Optional[asyncio.Task] = None
         self._stopping = False
-        self.sensor_type: Optional[str] = None
-        self.box_address: Optional[str] = None
+        self.box_address: Optional[str] = None  # sensor_type removed
 
     async def _read_metadata(self):
-        try:
-            sensor_type_data = await self.client.read_gatt_char(CUSTOM_SENSOR_TYPE_CHAR_UUID)
-            self.sensor_type = sensor_type_data.decode(errors="ignore").strip() or None
-            log.info("[%s] Successfully read sensor_type: %r", self.address, self.sensor_type)
-        except Exception as e:
-            log.warning("[%s] Sensor type char read skipped/failed: %s", self.address, e)
-
+        """Read static device info like the box address."""
         try:
             box = await self.client.read_gatt_char(CUSTOM_BOX_CHAR_UUID)
             self.box_address = box.decode(errors="ignore").strip() or None
@@ -60,31 +54,44 @@ class BLEPeripheral:
         except Exception as e:
             log.warning("[%s] Box char read skipped/failed: %s", self.address, e)
 
-        log.info("[%s] Metadata  sensor_type=%r box_address=%r", self.address, self.sensor_type, self.box_address)
+        log.info("[%s] Metadata box_address=%r", self.address, self.box_address)
 
-    async def _on_sensor_type_notify(self, _handle: int, data: bytearray):
-        """Handler for sensor type notifications - updates the current sensor type"""
+    async def _get_sensor_type_from_descriptor(self) -> Optional[str]:
+        """Read the descriptor attached to the sensor characteristic that contains the sensor type."""
         try:
-            sensor_type = data.decode('utf-8', errors='ignore').strip()
-            if sensor_type:
-                self.sensor_type = sensor_type
-                log.debug("[%s] Sensor type updated: %r", self.address, sensor_type)
-        except Exception as e:
-            log.warning("[%s] Failed to decode sensor type: %s", self.address, e)
+            descriptors = await self.client.get_descriptors(CUSTOM_SENSOR_CHAR_UUID)
+            if not descriptors:
+                log.debug("[%s] No descriptors found for sensor char", self.address)
+                return None
 
-    def _parse_sensor_data(self, data: bytes):
+            # Find descriptor by UUID
+            target_desc = next(
+                (d for d in descriptors if d.uuid.lower() == CUSTOM_SENSOR_TYPE_DESC_UUID),
+                None,
+            )
+            if not target_desc:
+                log.debug("[%s] Sensor type descriptor not found (uuid=%s)", self.address, CUSTOM_SENSOR_TYPE_DESC_UUID)
+                return None
+
+            data = await self.client.read_gatt_descriptor(target_desc.handle)
+            sensor_type = data.decode("utf-8", errors="ignore").strip()
+            return sensor_type or None
+        except Exception as e:
+            log.warning("[%s] Failed to read sensor type descriptor: %s", self.address, e)
+            return None
+
+    def _parse_sensor_data(self, data: bytes, sensor_type_hint: Optional[str] = None):
+        """Parse sensor value from notification payload."""
         if not data:
             return None, None
-        
         try:
-            json_str = data.decode('utf-8').strip()
+            json_str = data.decode("utf-8").strip()
             parsed = json.loads(json_str)
-            sensor_type = parsed.get("type", self.sensor_type or "unknown")
+            sensor_type = parsed.get("type", sensor_type_hint or "unknown")
             value = parsed.get("value")
             return sensor_type, value
         except (json.JSONDecodeError, UnicodeDecodeError):
             pass
-        
         try:
             if len(data) == 4:
                 value = round(struct.unpack("<f", data)[0], 3)
@@ -94,20 +101,22 @@ class BLEPeripheral:
                 value = struct.unpack("<d", data)[0]
             else:
                 value = int.from_bytes(data, "little", signed=True)
-            return self.sensor_type or "unknown", value
+            return sensor_type_hint or "unknown", value
         except Exception:
             try:
                 value = float(data.decode().strip())
-                return self.sensor_type or "unknown", value
+                return sensor_type_hint or "unknown", value
             except Exception:
                 return None, None
 
     async def _on_notify(self, _handle: int, data: bytearray):
-        sensor_type, value = self._parse_sensor_data(data)
+        """Handle notifications from the sensor data characteristic."""
+        sensor_type = await self._get_sensor_type_from_descriptor()
+        sensor_type, value = self._parse_sensor_data(data, sensor_type_hint=sensor_type)
         if sensor_type is None or value is None:
             log.warning("[%s] Failed to parse sensor data", self.address)
             return
-            
+
         payload = {
             "sensor_box": self.box_address or "unknown",
             "sensor_type": sensor_type,
@@ -118,7 +127,7 @@ class BLEPeripheral:
         topic = f"{MQTT_TOPIC_BASE}/{topic_id}"
         try:
             await self.mqtt.publish(topic, json.dumps(payload).encode("utf-8"))
-            log.info("[%s] notify  MQTT %s : %s", self.address, topic, payload)
+            log.info("[%s] notify MQTT %s : %s", self.address, topic, payload)
         except aiomqtt.MqttError as e:
             log.warning("[%s] MQTT publish error: %s", self.address, e)
 
@@ -136,15 +145,11 @@ class BLEPeripheral:
                 self.client.disconnected_callback = _on_disconnect
 
                 await self._read_metadata()
-                
-                # Subscribe to sensor type notifications to get updates with each measurement
-                await self.client.start_notify(CUSTOM_SENSOR_TYPE_CHAR_UUID, self._on_sensor_type_notify)
-                log.info("[%s] Subscribed to sensor type: %s", self.address, CUSTOM_SENSOR_TYPE_CHAR_UUID)
-                
-                # Subscribe to sensor value notifications
+
+                # Subscribe to sensor data notifications
                 await self.client.start_notify(CUSTOM_SENSOR_CHAR_UUID, self._on_notify)
                 log.info("[%s] Subscribed to sensor values: %s", self.address, CUSTOM_SENSOR_CHAR_UUID)
-                
+
                 backoff = 1
 
                 while self.client.is_connected and not self._stopping:
@@ -152,7 +157,6 @@ class BLEPeripheral:
 
                 try:
                     if self.client.is_connected:
-                        await self.client.stop_notify(CUSTOM_SENSOR_TYPE_CHAR_UUID)
                         await self.client.stop_notify(CUSTOM_SENSOR_CHAR_UUID)
                 except Exception:
                     pass
@@ -180,7 +184,6 @@ class BLEPeripheral:
         self._stopping = True
         if self.client and self.client.is_connected:
             try:
-                await self.client.stop_notify(CUSTOM_SENSOR_TYPE_CHAR_UUID)
                 await self.client.stop_notify(CUSTOM_SENSOR_CHAR_UUID)
             except Exception:
                 pass
@@ -191,6 +194,10 @@ class BLEPeripheral:
         if self._task:
             await self._task
 
+
+# ================================================================
+# BLE → MQTT Bridge
+# ================================================================
 class BLEToMQTTBridge:
     def __init__(self):
         self.peripherals: Dict[str, BLEPeripheral] = {}
@@ -251,6 +258,10 @@ class BLEToMQTTBridge:
         await asyncio.gather(*(p.stop() for p in self.peripherals.values()), return_exceptions=True)
         log.info("Stopped all connections.")
 
+
+# ================================================================
+# Main
+# ================================================================
 async def main():
     log.info("Starting BLE -> MQTT bridge (platform=%s python=%s)", sys.platform, sys.version.split()[0])
     bridge = BLEToMQTTBridge()
@@ -269,11 +280,11 @@ async def main():
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
 
+
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        # Allow graceful exit when launched from shells/tools sending SIGINT
         log.info("Exited via KeyboardInterrupt")
     except Exception as e:
         log.exception("Fatal error running main: %s", e)
