@@ -88,14 +88,23 @@ services:
       DB_SQLITE_FILE: "/data/database.sqlite"
     depends_on:
       - webserver
-  blegateway:
-    build: ./bletomqtt
-    container_name: blegateway
-    volumes:
-      - ./bletomqtt:/bletomqtt
-    depends_on:
-      - mosquitto
-    restart: unless-stopped
+  # blegateway:
+  #   build: ./bletomqtt
+  #   container_name: blegateway
+  #   privileged: true
+  #   volumes:
+  #     - ./bletomqtt:/bletomqtt
+  #     - /run/dbus:/run/dbus:ro
+  #   environment:
+  #     - MQTT_BROKER=mosquitto
+  #   depends_on:
+  #     - mosquitto
+  #   restart: unless-stopped
+  #   devices:
+  #     - /dev:/dev
+  #   cap_add:
+  #     - NET_ADMIN
+  #     - SYS_ADMIN
 
 volumes:
   pgdata:

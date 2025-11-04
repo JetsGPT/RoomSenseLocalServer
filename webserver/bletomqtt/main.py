@@ -24,8 +24,8 @@ TARGET_NAME = "TempSensor01"
 
 SCAN_DURATION = 8.0
 SCAN_INTERVAL = 10.0
-MQTT_BROKER = "mosquitto"
-#MQTT_PORT = 1883
+MQTT_BROKER = "localhost"
+MQTT_PORT = 1883
 MQTT_TOPIC_BASE = "ble/devices"
 MQTT_USERNAME = None
 MQTT_PASSWORD = None
@@ -228,14 +228,14 @@ class BLEToMQTTBridge:
         return matches
 
     async def run(self):
-        mqtt_kwargs = {"hostname": MQTT_BROKER}#, "port": MQTT_PORT}
+        mqtt_kwargs = {"hostname": MQTT_BROKER, "port": MQTT_PORT}
         if MQTT_USERNAME:
             mqtt_kwargs["username"] = MQTT_USERNAME
         if MQTT_PASSWORD:
             mqtt_kwargs["password"] = MQTT_PASSWORD
 
         async with aiomqtt.Client(**mqtt_kwargs) as mqtt:
-            log.info("Connected to MQTT broker at %s")#, MQTT_BROKER)
+            log.info("Connected to MQTT broker at %s", MQTT_BROKER)
 
             while not self._stopping:
                 try:
