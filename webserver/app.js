@@ -6,7 +6,6 @@ import connectPgSimple from "connect-pg-simple";
 import dotenv from "dotenv";
 import https from 'https';
 import fs from 'fs';
-import ratePermissions from './middleware/ratePermissions.js';
 
 dotenv.config();
 
@@ -36,13 +35,6 @@ import userRouter from './routes/users.js';
 import sensorRouter from './routes/sensors/index.js';
 import testingRouter from './routes/testing.js';
 app.use(express.json());
-// Make pool available to middlewares
-app.locals.pool = pool;
-
-// Optionally trust proxy for correct client IPs
-if (process.env.RATE_LIMIT_TRUST_PROXY === '1' || process.env.TRUST_PROXY === '1') {
-    app.set('trust proxy', 1);
-}
 app.use(cors({
     origin: function (origin, callback) {
         // Allow requests with no origin (like mobile apps or curl requests)
@@ -52,8 +44,6 @@ app.use(cors({
         const allowedOrigins = [
             'http://localhost:5173',
             'https://localhost:5173',
-            'http://127.0.0.1:5173',
-            'https://127.0.0.1:5173',
             'https://server.roomsense.duckdns.org',
             'https://roomsense.duckdns.org',
             'https://influxdb.roomsense.duckdns.org',
@@ -106,9 +96,6 @@ app.use(
         },
     })
 );
-
-// Apply DB-backed permissions and rate limiting
-app.use(ratePermissions());
 
 
 
