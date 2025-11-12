@@ -48,16 +48,6 @@ services:
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
       INFLUXD_TLS_CERT: /certs/influxdb-selfsigned.crt
       INFLUXD_TLS_KEY: /certs/influxdb-selfsigned.key
-  mosquitto:
-    image: eclipse-mosquitto:latest
-    container_name: mosquitto
-    restart: unless-stopped
-    ports:
-      - "1883:1883"
-    volumes:
-      - ./mqtt:/mosquitto/config
-      - ./mosquitto/data:/mosquitto/data
-      - ./mosquitto/log:/mosquitto/log
   blegateway:
     build: ./bletomqtt
     container_name: blegateway
@@ -67,7 +57,7 @@ services:
       - mosquitto
 
   mosquitto:
-    image: eclipse-mosquitto:2.0
+    image: eclipse-mosquitto:latest
     restart: unless-stopped
     ports:
       - "1883:1883"
