@@ -46,3 +46,87 @@ DROP TRIGGER IF EXISTS trg_users_hash_password ON public.users;
 CREATE TRIGGER trg_users_hash_password
 BEFORE INSERT OR UPDATE OF password ON public.users
 FOR EACH ROW EXECUTE FUNCTION public.users_hash_password();
+
+
+-- ----------------------------
+-- Roles and Permissions (RBAC + rate limits)
+-- ----------------------------
+
+-- Roles catalog
+CREATE TABLE IF NOT EXISTS public.roles (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(255) NOT NULL UNIQUE
+);
+
+-- Seed roles from existing users (non-null distinct values)
+INSERT INTO public.roles(name)
+SELECT DISTINCT role FROM public.users WHERE role IS NOT NULL
+ON CONFLICT (name) DO NOTHING;
+
+-- Add FK constraint from users.role -> roles(name) for referential integrity
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'users_role_fkey'
+      AND table_name = 'users'
+  ) THEN
+    ALTER TABLE public.users
+      ADD CONSTRAINT users_role_fkey FOREIGN KEY (role)
+      REFERENCES public.roles(name) ON UPDATE CASCADE ON DELETE SET NULL;
+  END IF;
+END $$;
+
+-- Permissions table (used by middleware)
+CREATE TABLE IF NOT EXISTS public.permissions (
+  id SERIAL PRIMARY KEY,
+  role TEXT NOT NULL,
+  method TEXT NOT NULL DEFAULT '*',
+  path_pattern TEXT NOT NULL,
+  match_type TEXT NOT NULL DEFAULT 'prefix',
+  allow BOOLEAN NOT NULL DEFAULT TRUE,
+  rate_limit_max INT DEFAULT 0,
+  rate_limit_window_ms INT DEFAULT 0,
+  CONSTRAINT permissions_role_fk FOREIGN KEY (role) REFERENCES public.roles(name) ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT permissions_unique UNIQUE (role, method, path_pattern, match_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_permissions_role ON public.permissions(role);
+
+-- ----------------------------
+-- Seed default permissions (idempotent)
+-- ----------------------------
+
+-- Ensure baseline roles exist
+INSERT INTO public.roles(name) VALUES ('anonymous') ON CONFLICT (name) DO NOTHING;
+INSERT INTO public.roles(name) VALUES ('user') ON CONFLICT (name) DO NOTHING;
+INSERT INTO public.roles(name) VALUES ('admin') ON CONFLICT (name) DO NOTHING;
+
+-- Anonymous: default deny all
+INSERT INTO public.permissions(role, method, path_pattern, match_type, allow)
+VALUES ('anonymous','*','/','prefix', false)
+ON CONFLICT (role, method, path_pattern, match_type) DO NOTHING;
+
+-- Anonymous: allow register/login with small rate limits
+INSERT INTO public.permissions(role, method, path_pattern, match_type, allow, rate_limit_max, rate_limit_window_ms)
+VALUES
+('anonymous','POST','/api/users/register','exact', true, 10, 60000),
+('anonymous','POST','/api/users/login','exact', true, 20, 60000)
+ON CONFLICT (role, method, path_pattern, match_type) DO NOTHING;
+
+-- User: allow sensors API with reasonable limits
+INSERT INTO public.permissions(role, method, path_pattern, match_type, allow, rate_limit_max, rate_limit_window_ms)
+VALUES
+('user','GET','/api/sensors','prefix', true, 120, 60000),
+('user','POST','/api/sensors','prefix', true, 30, 60000)
+ON CONFLICT (role, method, path_pattern, match_type) DO NOTHING;
+
+-- User: allow own profile/me endpoints
+INSERT INTO public.permissions(role, method, path_pattern, match_type, allow)
+VALUES ('user','GET','/api/users/me','exact', true)
+ON CONFLICT (role, method, path_pattern, match_type) DO NOTHING;
+
+-- Admin: full access, no rate limits
+INSERT INTO public.permissions(role, method, path_pattern, match_type, allow, rate_limit_max, rate_limit_window_ms)
+VALUES ('admin','*','/','prefix', true, 0, 0)
+ON CONFLICT (role, method, path_pattern, match_type) DO NOTHING;
