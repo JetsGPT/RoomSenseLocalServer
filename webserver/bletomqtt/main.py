@@ -77,7 +77,7 @@ class BLEPeripheral:
             sensor_type = data.decode("utf-8", errors="ignore").strip()
             return sensor_type or None
         except Exception as e:
-            log.warning("[%s] Failed to read sensor type descriptor: %s", self.address, e)
+            #log.warning("[%s] Failed to read sensor type descriptor: %s", self.address, e)
             return None
 
     def _parse_sensor_data(self, data: bytes, sensor_type_hint: Optional[str] = None):
