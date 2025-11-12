@@ -11,10 +11,11 @@ const trustProxy = process.env.RATE_LIMIT_TRUST_PROXY === '1' || process.env.TRU
 // In-memory caches
 const permissionsCache = new Map(); // role -> { rules, expiresAt }
 const counters = new Map(); // key -> { count, resetAt }
+let ensureSchemaPromise = null;
 
 function getClientKey(req) {
   if (req?.session?.user?.id) return `user:${req.session.user.id}`;
-  if (req?.sessionID) return `sess:${req.sessionID}`;
+  if (req?.session?.isPopulated) return `sess:${req.sessionID}`;
   return req.ip;
 }
 
@@ -34,10 +35,85 @@ function matchRule(rules, method, path) {
   return best;
 }
 
+async function ensurePermissionsSchema(pool) {
+  if (ensureSchemaPromise) return ensureSchemaPromise;
+
+  ensureSchemaPromise = (async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS roles (
+          id SERIAL PRIMARY KEY,
+          name VARCHAR(255) NOT NULL UNIQUE
+        )
+      `);
+
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS permissions (
+          id SERIAL PRIMARY KEY,
+          role TEXT NOT NULL,
+          method TEXT NOT NULL DEFAULT '*',
+          path_pattern TEXT NOT NULL,
+          match_type TEXT NOT NULL DEFAULT 'prefix',
+          allow BOOLEAN NOT NULL DEFAULT TRUE,
+          rate_limit_max INT DEFAULT 0,
+          rate_limit_window_ms INT DEFAULT 0,
+          CONSTRAINT permissions_role_fk
+            FOREIGN KEY (role)
+            REFERENCES roles(name)
+            ON UPDATE CASCADE
+            ON DELETE CASCADE,
+          CONSTRAINT permissions_unique
+            UNIQUE (role, method, path_pattern, match_type)
+        )
+      `);
+
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_permissions_role ON permissions(role)`);
+
+      await client.query(`
+        INSERT INTO roles(name)
+        VALUES ('anonymous'), ('user'), ('admin')
+        ON CONFLICT (name) DO NOTHING
+      `);
+
+      await client.query(`
+        INSERT INTO permissions(role, method, path_pattern, match_type, allow, rate_limit_max, rate_limit_window_ms)
+        VALUES
+          ('anonymous','*','/','prefix', false, 0, 0),
+          ('anonymous','POST','/api/users/register','exact', true, 10, 60000),
+          ('anonymous','POST','/api/users/login','exact', true, 20, 60000),
+          ('user','GET','/api/sensors','prefix', true, 120, 60000),
+          ('user','POST','/api/sensors','prefix', true, 30, 60000),
+          ('user','GET','/api/users/me','exact', true, 0, 0),
+          ('admin','*','/','prefix', true, 0, 0)
+        ON CONFLICT (role, method, path_pattern, match_type) DO NOTHING
+      `);
+
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  })();
+
+  try {
+    await ensureSchemaPromise;
+  } catch (err) {
+    ensureSchemaPromise = null;
+    throw err;
+  }
+}
+
 async function loadRulesForRole(pool, role) {
   const now = Date.now();
   const cached = permissionsCache.get(role);
   if (cached && cached.expiresAt > now) return cached.rules;
+
+  await ensurePermissionsSchema(pool);
 
   const query = `
     SELECT role, method, path_pattern, COALESCE(match_type,'prefix') AS match_type, allow,
