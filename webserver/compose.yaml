@@ -66,6 +66,31 @@ services:
     depends_on:
       - mosquitto
 
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    command: mosquitto -c /mosquitto/config/mosquitto.conf
+
+  telegraf:
+    image: telegraf:1.32
+    restart: unless-stopped
+    volumes:
+      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+    environment:
+      INFLUX_TOKEN: ${INFLUX_TOKEN}
+      INFLUX_ORG: ${INFLUX_ORG}
+      INFLUX_BUCKET: ${INFLUX_BUCKET}
+    depends_on:
+      - mosquitto
+      - influxdb
+
   nginx-proxy-manager:
     image: 'jc21/nginx-proxy-manager:latest'
     restart: unless-stopped
@@ -80,6 +105,23 @@ services:
       DB_SQLITE_FILE: "/data/database.sqlite"
     depends_on:
       - webserver
+  # blegateway:
+  #   build: ./bletomqtt
+  #   container_name: blegateway
+  #   privileged: true
+  #   volumes:
+  #     - ./bletomqtt:/bletomqtt
+  #     - /run/dbus:/run/dbus:ro
+  #   environment:
+  #     - MQTT_BROKER=mosquitto
+  #   depends_on:
+  #     - mosquitto
+  #   restart: unless-stopped
+  #   devices:
+  #     - /dev:/dev
+  #   cap_add:
+  #     - NET_ADMIN
+  #     - SYS_ADMIN
 
 volumes:
   pgdata:
