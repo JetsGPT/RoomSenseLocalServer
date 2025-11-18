@@ -35,6 +35,7 @@ const PORT = 8081   ;
 import userRouter from './routes/users.js';
 import sensorRouter from './routes/sensors/index.js';
 import testingRouter from './routes/testing.js';
+import deviceRouter from './routes/devices.js';
 app.use(express.json());
 // Make pool available to middlewares
 app.locals.pool = pool;
@@ -115,6 +116,7 @@ app.use(ratePermissions());
 
 app.use('/api/users', userRouter);
 app.use('/api/sensors', sensorRouter);
+app.use('/api/devices', deviceRouter);
 app.use('/testing', testingRouter);
 
 

@@ -1,6 +1,9 @@
 services:
   webserver:
     build: .
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "host.docker.internal:172.17.0.1"
     restart: unless-stopped
     environment:
       PGHOST: postgres
@@ -11,6 +14,8 @@ services:
       INFLUX_TOKEN: ${INFLUX_TOKEN}
       INFLUX_ORG: ${INFLUX_ORG}
       INFLUX_BUCKET: ${INFLUX_BUCKET}
+      DEV_BYPASS_AUTH: ${DEV_BYPASS_AUTH:-0}
+      BLE_GATEWAY_URL: ${BLE_GATEWAY_URL}
     links:
       - "postgres:postgres"
       - "influxdb:sensors"
@@ -51,10 +56,27 @@ services:
   blegateway:
     build: ./bletomqtt
     container_name: blegateway
+    privileged: true
     volumes:
       - ./bletomqtt:/bletomqtt
+      - /run/dbus:/run/dbus:ro
+      - /var/run/dbus:/var/run/dbus:ro
+    environment:
+      - MQTT_BROKER=mosquitto
+      - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
+    ports:
+      - "8080:8080"  # HTTP API port for BLE scan endpoint
     depends_on:
       - mosquitto
+    restart: unless-stopped
+    devices:
+      - /dev:/dev
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - NET_RAW
+    # Use host networking on Linux for direct Bluetooth access (comment out on Windows/Mac)
+    # network_mode: host
 
   mosquitto:
     image: eclipse-mosquitto:latest

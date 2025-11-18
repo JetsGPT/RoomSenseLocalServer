@@ -1,2 +1,4 @@
 bleak
 aiomqtt
+fastapi
+uvicorn[standard]

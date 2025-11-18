@@ -86,6 +86,7 @@ async function ensurePermissionsSchema(pool) {
           ('anonymous','POST','/api/users/login','exact', true, 20, 60000),
           ('user','GET','/api/sensors','prefix', true, 120, 60000),
           ('user','POST','/api/sensors','prefix', true, 30, 60000),
+          ('user','GET','/api/devices','prefix', true, 30, 60000),
           ('user','GET','/api/users/me','exact', true, 0, 0),
           ('admin','*','/','prefix', true, 0, 0)
         ON CONFLICT (role, method, path_pattern, match_type) DO NOTHING
@@ -153,6 +154,20 @@ function enforceCounter(key, limit, windowMs) {
 export default function ratePermissions() {
   return async function (req, res, next) {
     try {
+      // Dev mode bypass - skip rate limiting and permissions in dev
+      const devBypassValue = process.env.DEV_BYPASS_AUTH;
+      const devBypass = devBypassValue === '1' || devBypassValue === 'true' || devBypassValue === 1;
+      
+      if (devBypass) {
+        console.log('[DEV MODE] Bypassing rate limiter for:', req.method, req.path);
+        return next();
+      }
+      
+      // Debug: log if env var is set but not matching
+      if (devBypassValue !== undefined && !devBypass) {
+        console.log('[DEBUG] DEV_BYPASS_AUTH is set but not matching:', devBypassValue, typeof devBypassValue);
+      }
+
       if (trustProxy) req.app.set('trust proxy', 1);
       const pool = req.app?.locals?.pool;
       if (!pool) return next(new Error('Database pool is not available'));
