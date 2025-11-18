@@ -1,21 +1,27 @@
 services:
   webserver:
     build: .
+    # Note: env_file removed for security - only explicit variables are passed
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "host.docker.internal:172.17.0.1"
     restart: unless-stopped
     environment:
-      PGHOST: postgres
-      PGUSER: postgres
-      PGPASSWORD: password
-      PGDATABASE: user
+      PGHOST: ${PGHOST:-postgres}
+      PGUSER: ${PGUSER:-postgres}
+      PGPASSWORD: ${PGPASSWORD:-password}
+      PGPORT: ${PGPORT:-5432}
+      PGDATABASE: ${PGDATABASE:-user}
       INFLUX_URL: ${INFLUX_URL}
       INFLUX_TOKEN: ${INFLUX_TOKEN}
       INFLUX_ORG: ${INFLUX_ORG}
       INFLUX_BUCKET: ${INFLUX_BUCKET}
+      SESSION_SECRET: ${SESSION_SECRET}
       DEV_BYPASS_AUTH: ${DEV_BYPASS_AUTH:-0}
-      BLE_GATEWAY_URL: ${BLE_GATEWAY_URL}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      RATE_LIMIT_TRUST_PROXY: ${RATE_LIMIT_TRUST_PROXY:-0}
+      PERM_CACHE_MS: ${PERM_CACHE_MS:-30000}
+      BLE_GATEWAY_URL: ${BLE_GATEWAY_URL:-http://blegateway:8080}
     links:
       - "postgres:postgres"
       - "influxdb:sensors"
@@ -24,20 +30,23 @@ services:
     depends_on:
       - postgres
       - influxdb
+      - blegateway
   postgres:
     image: postgres:17.4
     restart: unless-stopped
+    # Note: Only PostgreSQL-specific variables - no access to other secrets
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./postgres-init:/docker-entrypoint-initdb.d
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: user
+      POSTGRES_USER: ${PGUSER:-postgres}
+      POSTGRES_PASSWORD: ${PGPASSWORD:-password}
+      POSTGRES_DB: ${PGDATABASE:-user}
   influxdb:
     image: influxdb:2.7.11
+    # Note: Only InfluxDB-specific variables - no access to other secrets
     ports:
       - "8086:8086"
     volumes:
@@ -57,15 +66,19 @@ services:
     build: ./bletomqtt
     container_name: blegateway
     privileged: true
+    # Note: Only MQTT variables - no access to database or other secrets
     volumes:
       - ./bletomqtt:/bletomqtt
+      # D-Bus volumes (Linux only - will fail on Windows but container will still start)
       - /run/dbus:/run/dbus:ro
       - /var/run/dbus:/var/run/dbus:ro
     environment:
-      - MQTT_BROKER=mosquitto
+      - MQTT_BROKER=${MQTT_BROKER:-mosquitto}
+      - MQTT_PORT=${MQTT_PORT:-1883}
       - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
+    # Port mapping for Windows/PC testing (use network_mode: host on Raspberry Pi)
     ports:
-      - "8080:8080"  # HTTP API port for BLE scan endpoint
+      - "8080:8080"
     depends_on:
       - mosquitto
     restart: unless-stopped
@@ -75,7 +88,7 @@ services:
       - NET_ADMIN
       - SYS_ADMIN
       - NET_RAW
-    # Use host networking on Linux for direct Bluetooth access (comment out on Windows/Mac)
+    # Uncomment below and comment out ports: for Raspberry Pi
     # network_mode: host
 
   mosquitto:
@@ -93,6 +106,7 @@ services:
   telegraf:
     image: telegraf:1.32
     restart: unless-stopped
+    # Note: Only InfluxDB variables needed for writing data
     volumes:
       - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
     environment:

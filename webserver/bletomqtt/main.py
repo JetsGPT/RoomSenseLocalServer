@@ -1,7 +1,4 @@
-﻿change the project to work with this bletomqtt
-
-script
-
+﻿
 #!/usr/bin/env python3
 import sys
 import asyncio
@@ -264,7 +261,10 @@ class BLEConnectionManager:
                 await scanner.stop()
             except (BleakError, OSError, FileNotFoundError) as e:
                 error_msg = str(e)
-                if "No such file or directory" in error_msg or "No adapter" in error_msg.lower():
+                if "No such file or directory" in error_msg:
+                    log.error("Bluetooth adapter not available. D-Bus socket not accessible. Ensure the container has access to /var/run/dbus/system_bus_socket")
+                    log.error("For Raspberry Pi, use 'network_mode: host' in docker-compose.yaml")
+                elif "No adapter" in error_msg.lower():
                     log.error("Bluetooth adapter not available.")
                 else:
                     log.error("BLE scan error: %s", e)
@@ -367,25 +367,19 @@ async def lifespan(app: FastAPI):
     if MQTT_USERNAME: mqtt_kwargs["username"] = MQTT_USERNAME
     if MQTT_PASSWORD: mqtt_kwargs["password"] = MQTT_PASSWORD
     
-    mqtt_client = aiomqtt.Client(**mqtt_kwargs)
-    _global_manager.mqtt_client = mqtt_client # 3. Inject client
-    
-    try:
-        await mqtt_client.connect()
+    # Use MQTT client as async context manager
+    mqtt_client_context = aiomqtt.Client(**mqtt_kwargs)
+    async with mqtt_client_context as mqtt_client:
+        _global_manager.mqtt_client = mqtt_client # 3. Inject client
         log.info("Connected to MQTT broker at %s", MQTT_BROKER)
-    except aiomqtt.MqttError as e:
-        log.error("Failed to connect to MQTT: %s. API will run, but publishing will fail.", e)
-        # We can still run to allow /scan to work
-    
-    try:
-        yield # 4. Run the app
-    finally:
-        # 5. Cleanup
-        log.info("Shutting down... disconnecting all peripherals.")
-        await _global_manager.stop_all_peripherals()
-        if mqtt_client.is_connected:
-            await mqtt_client.disconnect()
-        log.info("Shutdown complete.")
+        
+        try:
+            yield # 4. Run the app
+        finally:
+            # 5. Cleanup
+            log.info("Shutting down... disconnecting all peripherals.")
+            await _global_manager.stop_all_peripherals()
+            log.info("Shutdown complete.")
 
 
 app = FastAPI(title="BLE Gateway API", lifespan=lifespan) # <-- CHANGED
@@ -473,7 +467,7 @@ async def health_check():
     return JSONResponse(content={
         "status": "ok",
         "manager_initialized": _global_manager is not None,
-        "mqtt_connected": _global_manager and _global_manager.mqtt_client and _global_manager.mqtt_client.is_connected
+        "mqtt_connected": _global_manager and _global_manager.mqtt_client is not None
     })
 
 
@@ -499,6 +493,3 @@ if __name__ == "__main__":
     except Exception as e:
         log.exception("Fatal error running main: %s", e)
 
-
-
-Also there should be a new table in the postgre that saves data to the current connected esps through ble and when a new one connects or gets removed that change is reflected in the postgre

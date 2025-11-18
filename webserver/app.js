@@ -35,7 +35,7 @@ const PORT = 8081   ;
 import userRouter from './routes/users.js';
 import sensorRouter from './routes/sensors/index.js';
 import testingRouter from './routes/testing.js';
-import deviceRouter from './routes/devices.js';
+import deviceRouter, { initDatabasePool, restorePersistedConnections } from './routes/devices.js';
 app.use(express.json());
 // Make pool available to middlewares
 app.locals.pool = pool;
@@ -114,6 +114,9 @@ app.use(ratePermissions());
 
 
 
+// Initialize database pool for device router
+initDatabasePool(pool);
+
 app.use('/api/users', userRouter);
 app.use('/api/sensors', sensorRouter);
 app.use('/api/devices', deviceRouter);
@@ -126,9 +129,15 @@ const httpsOptions = {
     cert: fs.readFileSync('./server.cert'),
 };
 
-https.createServer(httpsOptions, app).listen(PORT, '0.0.0.0', () => {
+https.createServer(httpsOptions, app).listen(PORT, '0.0.0.0', async () => {
     console.log(`✅ HTTPS Server running on https://0.0.0.0:${PORT}`);
     console.log(`🌐 Access from local network: https://[RASPBERRY_PI_IP]:${PORT}`);
+    
+    // Restore persisted BLE connections after server starts
+    // Wait a bit for the BLE gateway to be ready
+    setTimeout(async () => {
+        await restorePersistedConnections();
+    }, 3000); // Wait 3 seconds for services to be ready
 });
 
 
