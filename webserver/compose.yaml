@@ -1,27 +1,42 @@
 services:
   webserver:
     build: .
-    # Note: env_file removed for security - only explicit variables are passed
+    # Environment variables are loaded by startup script from .env file or Docker secrets
+    # Sensitive values (SESSION_SECRET, passwords, tokens) are loaded from secrets on first boot
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "host.docker.internal:172.17.0.1"
     restart: unless-stopped
+    volumes:
+      # Mount secrets directory for file-based secrets (non-swarm mode)
+      - ./secrets:/webserver/secrets
+      # Persist initialization flag
+      - roomsense_init:/var/lib/roomsense
+    # Environment variables - these are fallbacks, .env file takes precedence
+    # Sensitive values are loaded from secrets by the startup script
     environment:
+      # Non-sensitive defaults (can be overridden by .env or secrets)
       PGHOST: ${PGHOST:-postgres}
       PGUSER: ${PGUSER:-postgres}
-      PGPASSWORD: ${PGPASSWORD:-password}
       PGPORT: ${PGPORT:-5432}
       PGDATABASE: ${PGDATABASE:-user}
-      INFLUX_URL: ${INFLUX_URL}
-      INFLUX_TOKEN: ${INFLUX_TOKEN}
-      INFLUX_ORG: ${INFLUX_ORG}
-      INFLUX_BUCKET: ${INFLUX_BUCKET}
-      SESSION_SECRET: ${SESSION_SECRET}
+      INFLUX_URL: ${INFLUX_URL:-https://influxdb:8086}
+      INFLUX_ORG: ${INFLUX_ORG:-RoomSense}
+      INFLUX_BUCKET: ${INFLUX_BUCKET:-sensors_data}
+      INFLUX_USERNAME: ${INFLUX_USERNAME:-admin}
+      MQTT_BROKER: ${MQTT_BROKER:-localhost}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      BLE_GATEWAY_URL: ${BLE_GATEWAY_URL:-http://host.docker.internal:8080}
       DEV_BYPASS_AUTH: ${DEV_BYPASS_AUTH:-0}
       TRUST_PROXY: ${TRUST_PROXY:-0}
       RATE_LIMIT_TRUST_PROXY: ${RATE_LIMIT_TRUST_PROXY:-0}
       PERM_CACHE_MS: ${PERM_CACHE_MS:-30000}
-      BLE_GATEWAY_URL: ${BLE_GATEWAY_URL:-http://blegateway:8080}
+      # Sensitive values - loaded from .env or secrets by startup script
+      # These are optional here as they'll be set by the script
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      PGPASSWORD: ${PGPASSWORD:-}
+      INFLUX_PASSWORD: ${INFLUX_PASSWORD:-}
+      INFLUX_TOKEN: ${INFLUX_TOKEN:-}
     links:
       - "postgres:postgres"
       - "influxdb:sensors"
@@ -55,11 +70,15 @@ services:
     restart: unless-stopped
     environment:
       DOCKER_INFLUXDB_INIT_MODE: setup
-      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUX_USERNAME}
-      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_PASSWORD}
-      DOCKER_INFLUXDB_INIT_ORG: ${INFLUX_ORG}
-      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUX_BUCKET}
-      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
+      # Default values for first boot initialization (can be overridden by .env)
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUX_USERNAME:-admin}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_PASSWORD:-admin123}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUX_ORG:-RoomSense}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUX_BUCKET:-sensors_data}
+      # Token: If not provided, InfluxDB will generate one automatically
+      # On first boot, webserver init script will generate a token and store it
+      # For subsequent boots, use the token from .env or secrets
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN:-}
       INFLUXD_TLS_CERT: /certs/influxdb-selfsigned.crt
       INFLUXD_TLS_KEY: /certs/influxdb-selfsigned.key
   blegateway:
@@ -73,12 +92,15 @@ services:
       - /run/dbus:/run/dbus:ro
       - /var/run/dbus:/var/run/dbus:ro
     environment:
-      - MQTT_BROKER=${MQTT_BROKER:-mosquitto}
+      # For Raspberry Pi: use 'localhost' because blegateway uses host networking
+      # For Windows/development: can use 'mosquitto' if not using host networking
+      - MQTT_BROKER=${MQTT_BROKER:-localhost}
       - MQTT_PORT=${MQTT_PORT:-1883}
       - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
     # Port mapping for Windows/PC testing (use network_mode: host on Raspberry Pi)
-    ports:
-      - "8080:8080"
+    # For Raspberry Pi: uncomment network_mode below and comment out ports
+   # ports:
+      #- "8080:8080"
     depends_on:
       - mosquitto
     restart: unless-stopped
@@ -89,7 +111,7 @@ services:
       - SYS_ADMIN
       - NET_RAW
     # Uncomment below and comment out ports: for Raspberry Pi
-    # network_mode: host
+    network_mode: host
 
   mosquitto:
     image: eclipse-mosquitto:latest
@@ -154,3 +176,4 @@ volumes:
   influxdb_data:
   npm_data:
   npm_letsencrypt:
+  roomsense_init:  # Persists initialization state
