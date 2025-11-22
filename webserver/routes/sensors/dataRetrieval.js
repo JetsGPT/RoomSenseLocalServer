@@ -1,13 +1,13 @@
 import express from 'express';
 import { requireLogin } from '../../auth/auth.js';
 import { influxClient, organisation, bucket } from './influxClient.js';
-import { 
-    buildSecureFluxQuery, 
-    formatSensorData, 
-    sanitizeSensorBox, 
-    sanitizeSensorType, 
-    sanitizeFluxTime, 
-    sanitizeLimit 
+import {
+    buildSecureFluxQuery,
+    formatSensorData,
+    sanitizeSensorBox,
+    sanitizeSensorType,
+    sanitizeFluxTime,
+    sanitizeLimit
 } from './utils.js';
 
 const router = express.Router();
@@ -57,16 +57,17 @@ function executeQuery(fluxQuery, res, successMessage) {
  * Validates and sanitizes query parameters
  */
 function sanitizeQueryParams(req) {
-    const { sensor_box, sensor_type, start_time, end_time, limit } = req.query;
-    
+    const { sensor_box, sensor_type, start_time, end_time, limit, sort } = req.query;
+
     const sanitized = {
         sensor_box: sensor_box ? sanitizeSensorBox(sensor_box) : null,
         sensor_type: sensor_type ? sanitizeSensorType(sensor_type) : null,
         start_time: sanitizeFluxTime(start_time, '-24h'),
         end_time: sanitizeFluxTime(end_time, 'now()'),
-        limit: sanitizeLimit(limit)
+        limit: sanitizeLimit(limit),
+        sort: sort === 'desc' || sort === 'asc' ? sort : null
     };
-    
+
     // Log security warnings for rejected inputs
     if (sensor_box && !sanitized.sensor_box) {
         logSecurityWarning(req, 'sensor_box', sensor_box, 'Invalid characters or format');
@@ -80,7 +81,7 @@ function sanitizeQueryParams(req) {
     if (end_time && sanitized.end_time === 'now()' && end_time !== 'now()') {
         logSecurityWarning(req, 'end_time', end_time, 'Invalid time format - using default');
     }
-    
+
     return sanitized;
 }
 
@@ -94,9 +95,9 @@ function sanitizeQueryParams(req) {
  */
 router.get('/data', requireLogin, (req, res) => {
     console.log('A read attempt has been made');
-    
+
     const sanitized = sanitizeQueryParams(req);
-    
+
     const fluxQuery = buildSecureFluxQuery(bucket, sanitized);
     executeQuery(fluxQuery, res, 'A read attempt has succeeded');
 });
@@ -107,38 +108,39 @@ router.get('/data', requireLogin, (req, res) => {
  */
 router.get('/data/box/:sensor_box', requireLogin, (req, res) => {
     const { sensor_box } = req.params;
-    const { sensor_type, start_time, end_time, limit } = req.query;
-    
-    // Validate required path parameter
+    const { sensor_type, start_time, end_time, limit, sort } = req.query;
+
     const sanitizedBox = sanitizeSensorBox(sensor_box);
     if (!sanitizedBox) {
         logSecurityWarning(req, 'sensor_box', sensor_box, 'Invalid characters or format');
-        return res.status(400).json({ 
+        return res.status(400).json({
             error: 'Invalid sensor_box format',
             detail: 'sensor_box must contain only alphanumeric characters, underscores, hyphens, and dots'
         });
     }
-    
+
     // Sanitize optional query parameters
     const sanitizedType = sensor_type ? sanitizeSensorType(sensor_type) : null;
     const sanitizedStart = sanitizeFluxTime(start_time, '-24h');
     const sanitizedEnd = sanitizeFluxTime(end_time, 'now()');
     const sanitizedLimit = sanitizeLimit(limit);
-    
+    const sanitizedSort = sort === 'desc' || sort === 'asc' ? sort : null;
+
     if (sensor_type && !sanitizedType) {
         logSecurityWarning(req, 'sensor_type', sensor_type, 'Invalid characters or format');
     }
-    
+
     console.log(`Getting data for sensor box: ${sanitizedBox}`);
-    
+
     const fluxQuery = buildSecureFluxQuery(bucket, {
         sensor_box: sanitizedBox,
         sensor_type: sanitizedType,
         start_time: sanitizedStart,
         end_time: sanitizedEnd,
-        limit: sanitizedLimit
+        limit: sanitizedLimit,
+        sort: sanitizedSort
     });
-    
+
     executeQuery(fluxQuery, res, `Data retrieved for sensor box: ${sanitizedBox}`);
 });
 
@@ -148,38 +150,40 @@ router.get('/data/box/:sensor_box', requireLogin, (req, res) => {
  */
 router.get('/data/type/:sensor_type', requireLogin, (req, res) => {
     const { sensor_type } = req.params;
-    const { sensor_box, start_time, end_time, limit } = req.query;
-    
+    const { sensor_box, start_time, end_time, limit, sort } = req.query;
+
     // Validate required path parameter
     const sanitizedType = sanitizeSensorType(sensor_type);
     if (!sanitizedType) {
         logSecurityWarning(req, 'sensor_type', sensor_type, 'Invalid characters or format');
-        return res.status(400).json({ 
+        return res.status(400).json({
             error: 'Invalid sensor_type format',
             detail: 'sensor_type must contain only alphanumeric characters, underscores, hyphens, and dots'
         });
     }
-    
+
     // Sanitize optional query parameters
     const sanitizedBox = sensor_box ? sanitizeSensorBox(sensor_box) : null;
     const sanitizedStart = sanitizeFluxTime(start_time, '-24h');
     const sanitizedEnd = sanitizeFluxTime(end_time, 'now()');
     const sanitizedLimit = sanitizeLimit(limit);
-    
+    const sanitizedSort = sort === 'desc' || sort === 'asc' ? sort : null;
+
     if (sensor_box && !sanitizedBox) {
         logSecurityWarning(req, 'sensor_box', sensor_box, 'Invalid characters or format');
     }
-    
+
     console.log(`Getting data for sensor type: ${sanitizedType}`);
-    
+
     const fluxQuery = buildSecureFluxQuery(bucket, {
         sensor_box: sanitizedBox,
         sensor_type: sanitizedType,
         start_time: sanitizedStart,
         end_time: sanitizedEnd,
-        limit: sanitizedLimit
+        limit: sanitizedLimit,
+        sort: sanitizedSort
     });
-    
+
     executeQuery(fluxQuery, res, `Data retrieved for sensor type: ${sanitizedType}`);
 });
 
@@ -189,10 +193,10 @@ router.get('/data/type/:sensor_type', requireLogin, (req, res) => {
  */
 router.get('/boxes', requireLogin, (req, res) => {
     console.log('Getting unique sensor boxes');
-    
+
     const boxes = new Set();
     const queryClient = influxClient.getQueryApi(organisation);
-    
+
     // Build secure query (no user input, but still use secure method)
     const fluxQuery = buildSecureFluxQuery(bucket, {
         start_time: '-30d',
@@ -230,10 +234,10 @@ router.get('/boxes', requireLogin, (req, res) => {
  */
 router.get('/types', requireLogin, (req, res) => {
     console.log('Getting unique sensor types');
-    
+
     const types = new Set();
     const queryClient = influxClient.getQueryApi(organisation);
-    
+
     // Build secure query (no user input, but still use secure method)
     const fluxQuery = buildSecureFluxQuery(bucket, {
         start_time: '-30d',

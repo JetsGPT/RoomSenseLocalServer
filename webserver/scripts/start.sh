@@ -31,6 +31,13 @@ else
     echo "Container already initialized, skipping secret generation"
 fi
 
+# Convert .env file to Unix line endings if it exists (handles Windows CRLF)
+if [ -f "/webserver/.env" ]; then
+    echo "Converting .env file to Unix line endings..."
+    dos2unix /webserver/.env || echo "dos2unix failed, trying sed..."
+    sed -i 's/\r$//' /webserver/.env || echo "sed failed"
+fi
+
 # Load environment variables
 if [ -f "${ENV_LOADER}" ]; then
     source "${ENV_LOADER}"

@@ -20,7 +20,7 @@ const MAX_STRING_LENGTH = 255;
  */
 export function writeSensorData(sensor_box, sensor_type, value) {
     const writeClient = influxClient.getWriteApi(organisation, bucket, 'ns');
-    
+
     const point = new Point('sensor_data')
         .tag('sensor_box', sensor_box)
         .tag('sensor_type', sensor_type)
@@ -36,21 +36,21 @@ export function writeSensorData(sensor_box, sensor_type, value) {
  */
 export function writeTestData() {
     const writeClient = influxClient.getWriteApi(organisation, bucket, 'ns');
-    
+
     const sensorBoxes = ['box_001', 'box_002', 'box_003'];
     const sensorTypes = ['temperature', 'humidity', 'pressure', 'light'];
-    
+
     const now = new Date();
     const sixMonthsAgo = new Date(now.getTime() - (6 * 30 * 24 * 60 * 60 * 1000));
     const timeRange = now.getTime() - sixMonthsAgo.getTime();
-    
+
     for (let i = 0; i < 20; i++) {
         const sensorBox = sensorBoxes[Math.floor(Math.random() * sensorBoxes.length)];
         const sensorType = sensorTypes[Math.floor(Math.random() * sensorTypes.length)];
         const value = Math.random() * 100;
-        
+
         const randomTime = new Date(sixMonthsAgo.getTime() + Math.random() * timeRange);
-        
+
         const point = new Point('sensor_data')
             .tag('sensor_box', sensorBox)
             .tag('sensor_type', sensorType)
@@ -59,7 +59,7 @@ export function writeTestData() {
 
         writeClient.writePoint(point);
     }
-    
+
     writeClient.flush();
 }
 
@@ -76,17 +76,23 @@ export function writeTestData() {
  */
 export function sanitizeSensorBox(value) {
     if (!value || typeof value !== 'string') return null;
-    
+
+    // Strip "RoomSense-" prefix (case-insensitive)
+    let cleanValue = value;
+    if (cleanValue.toLowerCase().startsWith('roomsense-')) {
+        cleanValue = cleanValue.substring('RoomSense-'.length);
+    }
+
     // Allow only: alphanumeric, underscore, hyphen, dot
-    const sanitized = value
+    const sanitized = cleanValue
         .trim()
         .replace(/[^a-zA-Z0-9_.-]/g, '')
         .substring(0, MAX_STRING_LENGTH);
-    
+
     if (sanitized.length === 0 || sanitized.length > MAX_STRING_LENGTH) {
         return null;
     }
-    
+
     return sanitized;
 }
 
@@ -99,17 +105,17 @@ export function sanitizeSensorBox(value) {
  */
 export function sanitizeSensorType(value) {
     if (!value || typeof value !== 'string') return null;
-    
+
     // Allow only: alphanumeric, underscore, hyphen, dot
     const sanitized = value
         .trim()
         .replace(/[^a-zA-Z0-9_.-]/g, '')
         .substring(0, MAX_STRING_LENGTH);
-    
+
     if (sanitized.length === 0 || sanitized.length > MAX_STRING_LENGTH) {
         return null;
     }
-    
+
     return sanitized;
 }
 
@@ -123,18 +129,18 @@ export function sanitizeSensorType(value) {
  */
 export function sanitizeFluxTime(value, defaultValue = '-24h') {
     if (!value || typeof value !== 'string') return defaultValue;
-    
+
     const trimmed = value.trim();
-    
+
     // Valid patterns
     const relativeTimePattern = /^-?\d+[hmsd]$/;
     const rfc3339Pattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z?$/;
     const nowPattern = /^now\(\)$/;
-    
-    if (relativeTimePattern.test(trimmed) || 
-        rfc3339Pattern.test(trimmed) || 
+
+    if (relativeTimePattern.test(trimmed) ||
+        rfc3339Pattern.test(trimmed) ||
         nowPattern.test(trimmed)) {
-        
+
         // Additional validation: limit relative time to reasonable ranges
         if (relativeTimePattern.test(trimmed)) {
             const match = trimmed.match(/^(-?\d+)([hmsd])$/);
@@ -150,7 +156,7 @@ export function sanitizeFluxTime(value, defaultValue = '-24h') {
         }
         return trimmed.substring(0, 50); // Limit length
     }
-    
+
     return defaultValue;
 }
 
@@ -163,13 +169,13 @@ export function sanitizeFluxTime(value, defaultValue = '-24h') {
  */
 export function sanitizeLimit(value) {
     if (value === undefined || value === null) return MAX_LIMIT;
-    
+
     const num = typeof value === 'string' ? parseInt(value, 10) : Number(value);
-    
+
     if (!Number.isFinite(num) || num < 1) {
         return MAX_LIMIT;
     }
-    
+
     return Math.min(Math.floor(num), MAX_LIMIT);
 }
 
@@ -189,7 +195,7 @@ function escapeFluxString(value) {
     if (typeof value !== 'string') {
         throw new Error('Value must be a string');
     }
-    
+
     // Escape special characters for Flux string literals
     return value
         .replace(/\\/g, '\\\\')  // Escape backslashes first
@@ -210,6 +216,7 @@ function escapeFluxString(value) {
  * @param {string} [options.start_time] - Start time (default: '-24h')
  * @param {string} [options.end_time] - End time (default: 'now()')
  * @param {number|string} [options.limit] - Result limit (default: MAX_LIMIT)
+ * @param {string} [options.sort] - Sort order ('asc' or 'desc')
  * @returns {string} - Secure Flux query string
  * @throws {Error} If bucket name is invalid
  */
@@ -218,18 +225,18 @@ export function buildSecureFluxQuery(bucket, options = {}) {
     if (!bucket || typeof bucket !== 'string') {
         throw new Error('Invalid bucket name');
     }
-    
+
     // Sanitize all inputs
     const startTime = sanitizeFluxTime(options.start_time, '-24h');
     const endTime = sanitizeFluxTime(options.end_time, 'now()');
     const limit = sanitizeLimit(options.limit);
-    
+
     // Build base query with safe bucket name (from config)
     const escapedBucket = escapeFluxString(bucket);
     let query = `from(bucket: "${escapedBucket}")
  |> range(start: ${startTime}, stop: ${endTime})
  |> filter(fn: (r) => r._measurement == "sensor_data")`;
-    
+
     // Add sensor_box filter if provided (sanitized)
     if (options.sensor_box) {
         const sanitizedBox = sanitizeSensorBox(options.sensor_box);
@@ -238,7 +245,7 @@ export function buildSecureFluxQuery(bucket, options = {}) {
             query += `\n |> filter(fn: (r) => r.sensor_box == "${escapedBox}")`;
         }
     }
-    
+
     // Add sensor_type filter if provided (sanitized)
     if (options.sensor_type) {
         const sanitizedType = sanitizeSensorType(options.sensor_type);
@@ -247,10 +254,17 @@ export function buildSecureFluxQuery(bucket, options = {}) {
             query += `\n |> filter(fn: (r) => r.sensor_type == "${escapedType}")`;
         }
     }
-    
+
+    // Add sort if requested
+    if (options.sort === 'desc') {
+        query += `\n |> sort(columns: ["_time"], desc: true)`;
+    } else if (options.sort === 'asc') {
+        query += `\n |> sort(columns: ["_time"], desc: false)`;
+    }
+
     // Add limit (always applied for performance and DoS protection)
     query += `\n |> limit(n: ${limit})`;
-    
+
     return query;
 }
 
