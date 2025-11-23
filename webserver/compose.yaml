@@ -1,16 +1,42 @@
 services:
   webserver:
     build: .
+    # Environment variables are loaded by startup script from .env file or Docker secrets
+    # Sensitive values (SESSION_SECRET, passwords, tokens) are loaded from secrets on first boot
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "host.docker.internal:172.17.0.1"
     restart: unless-stopped
+    volumes:
+      # Mount secrets directory for file-based secrets (non-swarm mode)
+      - ./secrets:/webserver/secrets
+      # Persist initialization flag
+      - roomsense_init:/var/lib/roomsense
+    # Environment variables - these are fallbacks, .env file takes precedence
+    # Sensitive values are loaded from secrets by the startup script
     environment:
-      PGHOST: postgres
-      PGUSER: postgres
-      PGPASSWORD: password
-      PGDATABASE: user
-      INFLUX_URL: ${INFLUX_URL}
-      INFLUX_TOKEN: ${INFLUX_TOKEN}
-      INFLUX_ORG: ${INFLUX_ORG}
-      INFLUX_BUCKET: ${INFLUX_BUCKET}
+      # Non-sensitive defaults (can be overridden by .env or secrets)
+      PGHOST: ${PGHOST:-postgres}
+      PGUSER: ${PGUSER:-postgres}
+      PGPORT: ${PGPORT:-5432}
+      PGDATABASE: ${PGDATABASE:-user}
+      INFLUX_URL: ${INFLUX_URL:-https://influxdb:8086}
+      INFLUX_ORG: ${INFLUX_ORG:-RoomSense}
+      INFLUX_BUCKET: ${INFLUX_BUCKET:-sensors_data}
+      INFLUX_USERNAME: ${INFLUX_USERNAME:-admin}
+      MQTT_BROKER: ${MQTT_BROKER:-localhost}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      BLE_GATEWAY_URL: ${BLE_GATEWAY_URL:-http://host.docker.internal:8080}
+      DEV_BYPASS_AUTH: ${DEV_BYPASS_AUTH:-0}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      RATE_LIMIT_TRUST_PROXY: ${RATE_LIMIT_TRUST_PROXY:-0}
+      PERM_CACHE_MS: ${PERM_CACHE_MS:-30000}
+      # Sensitive values - loaded from .env or secrets by startup script
+      # These are optional here as they'll be set by the script
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      PGPASSWORD: ${PGPASSWORD:-}
+      INFLUX_PASSWORD: ${INFLUX_PASSWORD:-}
+      INFLUX_TOKEN: ${INFLUX_TOKEN:-}
     links:
       - "postgres:postgres"
       - "influxdb:sensors"
@@ -19,20 +45,23 @@ services:
     depends_on:
       - postgres
       - influxdb
+      - blegateway
   postgres:
     image: postgres:17.4
     restart: unless-stopped
+    # Note: Only PostgreSQL-specific variables - no access to other secrets
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./postgres-init:/docker-entrypoint-initdb.d
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: user
+      POSTGRES_USER: ${PGUSER:-postgres}
+      POSTGRES_PASSWORD: ${PGPASSWORD:-password}
+      POSTGRES_DB: ${PGDATABASE:-user}
   influxdb:
     image: influxdb:2.7.11
+    # Note: Only InfluxDB-specific variables - no access to other secrets
     ports:
       - "8086:8086"
     volumes:
@@ -41,20 +70,48 @@ services:
     restart: unless-stopped
     environment:
       DOCKER_INFLUXDB_INIT_MODE: setup
-      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUX_USERNAME}
-      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_PASSWORD}
-      DOCKER_INFLUXDB_INIT_ORG: ${INFLUX_ORG}
-      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUX_BUCKET}
-      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
+      # Default values for first boot initialization (can be overridden by .env)
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUX_USERNAME:-admin}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_PASSWORD:-admin123}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUX_ORG:-RoomSense}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUX_BUCKET:-sensors_data}
+      # Token: If not provided, InfluxDB will generate one automatically
+      # On first boot, webserver init script will generate a token and store it
+      # For subsequent boots, use the token from .env or secrets
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN:-}
       INFLUXD_TLS_CERT: /certs/influxdb-selfsigned.crt
       INFLUXD_TLS_KEY: /certs/influxdb-selfsigned.key
   blegateway:
     build: ./bletomqtt
     container_name: blegateway
+    privileged: true
+    # Note: Only MQTT variables - no access to database or other secrets
     volumes:
       - ./bletomqtt:/bletomqtt
+      # D-Bus volumes (Linux only - will fail on Windows but container will still start)
+      - /run/dbus:/run/dbus:ro
+      - /var/run/dbus:/var/run/dbus:ro
+    environment:
+      # For Raspberry Pi: use 'localhost' because blegateway uses host networking
+      # For Windows/development: can use 'mosquitto' if not using host networking
+      - MQTT_BROKER=${MQTT_BROKER:-localhost}
+      - MQTT_PORT=${MQTT_PORT:-1883}
+      - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
+    # Port mapping for Windows/PC testing (use network_mode: host on Raspberry Pi)
+    # For Raspberry Pi: uncomment network_mode below and comment out ports
+   # ports:
+      #- "8080:8080"
     depends_on:
       - mosquitto
+    restart: unless-stopped
+    devices:
+      - /dev:/dev
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - NET_RAW
+    # Uncomment below and comment out ports: for Raspberry Pi
+    network_mode: host
 
   mosquitto:
     image: eclipse-mosquitto:latest
@@ -71,6 +128,7 @@ services:
   telegraf:
     image: telegraf:1.32
     restart: unless-stopped
+    # Note: Only InfluxDB variables needed for writing data
     volumes:
       - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
     environment:
@@ -118,3 +176,4 @@ volumes:
   influxdb_data:
   npm_data:
   npm_letsencrypt:
+  roomsense_init:  # Persists initialization state

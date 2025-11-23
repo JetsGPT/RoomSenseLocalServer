@@ -1,6 +1,19 @@
 
 
 function requireLogin(req, res, next) {
+    // Dev mode bypass - set DEV_BYPASS_AUTH=1 in .env to skip authentication
+    if (process.env.DEV_BYPASS_AUTH === '1') {
+        // Create a fake user session for dev mode
+        if (!req.session.user) {
+            req.session.user = {
+                id: 'dev-user',
+                username: 'dev',
+                role: 'user'
+            };
+        }
+        return next();
+    }
+    
     if (!req.session.user) {
         return res.status(401).send({ error: 'You must be logged in' });
     }

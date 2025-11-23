@@ -130,3 +130,38 @@ ON CONFLICT (role, method, path_pattern, match_type) DO NOTHING;
 INSERT INTO public.permissions(role, method, path_pattern, match_type, allow, rate_limit_max, rate_limit_window_ms)
 VALUES ('admin','*','/','prefix', true, 0, 0)
 ON CONFLICT (role, method, path_pattern, match_type) DO NOTHING;
+
+-- ----------------------------
+-- BLE Device Connections Table
+-- ----------------------------
+
+-- Table to store persistent BLE device connections
+CREATE TABLE IF NOT EXISTS public.ble_connections (
+  id SERIAL PRIMARY KEY,
+  address VARCHAR(17) NOT NULL UNIQUE, -- MAC address format: XX:XX:XX:XX:XX:XX
+  name VARCHAR(255),
+  connected_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+  last_seen TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ble_connections_address ON public.ble_connections(address);
+CREATE INDEX IF NOT EXISTS idx_ble_connections_active ON public.ble_connections(is_active);
+
+-- Function to update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_ble_connections_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to automatically update updated_at
+DROP TRIGGER IF EXISTS trg_update_ble_connections_updated_at ON public.ble_connections;
+CREATE TRIGGER trg_update_ble_connections_updated_at
+BEFORE UPDATE ON public.ble_connections
+FOR EACH ROW
+EXECUTE FUNCTION update_ble_connections_updated_at();

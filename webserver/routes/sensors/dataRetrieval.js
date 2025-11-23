@@ -1,24 +1,39 @@
 import express from 'express';
 import { requireLogin } from '../../auth/auth.js';
 import { influxClient, organisation, bucket } from './influxClient.js';
-import { buildFluxQuery, formatSensorData } from './utils.js';
+import {
+    buildSecureFluxQuery,
+    formatSensorData,
+    sanitizeSensorBox,
+    sanitizeSensorType,
+    sanitizeFluxTime,
+    sanitizeLimit
+} from './utils.js';
 
 const router = express.Router();
 
-// Get all sensor data with optional filtering
-router.get('/data', requireLogin, (req, res) => {
-    const { sensor_box, sensor_type, start_time, end_time, limit } = req.query;
-    
-    console.log("A read attempt has been made");
-    let data = [];
-    let queryClient = influxClient.getQueryApi(organisation);
-    
-    // Build dynamic query using utility function
-    const baseQuery = `from(bucket: "${bucket}")
- |> range(start: ${start_time || '-24h'}, stop: ${end_time || 'now()'})
- |> filter(fn: (r) => r._measurement == "sensor_data")`;
- 
-    const fluxQuery = buildFluxQuery(baseQuery, { sensor_box, sensor_type, limit });
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Logs security warnings for potential injection attempts
+ */
+function logSecurityWarning(req, field, value, reason) {
+    const user = req.session?.user?.username || 'anonymous';
+    const ip = req.ip || 'unknown';
+    console.warn(
+        `[SECURITY] Potential injection attempt detected - User: ${user}, IP: ${ip}, ` +
+        `Field: ${field}, Value: ${JSON.stringify(value)}, Reason: ${reason}`
+    );
+}
+
+/**
+ * Executes a Flux query and returns formatted results
+ */
+function executeQuery(fluxQuery, res, successMessage) {
+    const data = [];
+    const queryClient = influxClient.getQueryApi(organisation);
 
     queryClient.queryRows(fluxQuery, {
         next: (row, tableMeta) => {
@@ -26,89 +41,168 @@ router.get('/data', requireLogin, (req, res) => {
             data.push(formatSensorData(tableObject));
         },
         error: (error) => {
-            console.error("A read attempt has failed:", error);
+            console.error(`Query execution failed: ${error.message}`);
             res.status(500).json({ error: 'Error getting data.' });
         },
         complete: () => {
             res.status(200).json(data);
-            console.log("A read attempt has succeeded");
+            if (successMessage) {
+                console.log(successMessage);
+            }
         },
     });
+}
+
+/**
+ * Validates and sanitizes query parameters
+ */
+function sanitizeQueryParams(req) {
+    const { sensor_box, sensor_type, start_time, end_time, limit, sort } = req.query;
+
+    const sanitized = {
+        sensor_box: sensor_box ? sanitizeSensorBox(sensor_box) : null,
+        sensor_type: sensor_type ? sanitizeSensorType(sensor_type) : null,
+        start_time: sanitizeFluxTime(start_time, '-24h'),
+        end_time: sanitizeFluxTime(end_time, 'now()'),
+        limit: sanitizeLimit(limit),
+        sort: sort === 'desc' || sort === 'asc' ? sort : null
+    };
+
+    // Log security warnings for rejected inputs
+    if (sensor_box && !sanitized.sensor_box) {
+        logSecurityWarning(req, 'sensor_box', sensor_box, 'Invalid characters or format');
+    }
+    if (sensor_type && !sanitized.sensor_type) {
+        logSecurityWarning(req, 'sensor_type', sensor_type, 'Invalid characters or format');
+    }
+    if (start_time && sanitized.start_time === '-24h' && start_time !== '-24h') {
+        logSecurityWarning(req, 'start_time', start_time, 'Invalid time format - using default');
+    }
+    if (end_time && sanitized.end_time === 'now()' && end_time !== 'now()') {
+        logSecurityWarning(req, 'end_time', end_time, 'Invalid time format - using default');
+    }
+
+    return sanitized;
+}
+
+// ============================================================================
+// Data Retrieval Endpoints
+// ============================================================================
+
+/**
+ * GET /api/sensors/data
+ * Get all sensor data with optional filtering
+ */
+router.get('/data', requireLogin, (req, res) => {
+    console.log('A read attempt has been made');
+
+    const sanitized = sanitizeQueryParams(req);
+
+    const fluxQuery = buildSecureFluxQuery(bucket, sanitized);
+    executeQuery(fluxQuery, res, 'A read attempt has succeeded');
 });
 
-// Get data by sensor box
+/**
+ * GET /api/sensors/data/box/:sensor_box
+ * Get data filtered by sensor box
+ */
 router.get('/data/box/:sensor_box', requireLogin, (req, res) => {
     const { sensor_box } = req.params;
-    const { sensor_type, start_time, end_time, limit } = req.query;
-    
-    console.log(`Getting data for sensor box: ${sensor_box}`);
-    let data = [];
-    let queryClient = influxClient.getQueryApi(organisation);
-    
-    const baseQuery = `from(bucket: "${bucket}")
- |> range(start: ${start_time || '-24h'}, stop: ${end_time || 'now()'})
- |> filter(fn: (r) => r._measurement == "sensor_data")
- |> filter(fn: (r) => r.sensor_box == "${sensor_box}")`;
- 
-    const fluxQuery = buildFluxQuery(baseQuery, { sensor_type, limit });
+    const { sensor_type, start_time, end_time, limit, sort } = req.query;
 
-    queryClient.queryRows(fluxQuery, {
-        next: (row, tableMeta) => {
-            const tableObject = tableMeta.toObject(row);
-            data.push(formatSensorData(tableObject));
-        },
-        error: (error) => {
-            console.error("Error getting sensor box data:", error);
-            res.status(500).json({ error: 'Error getting data.' });
-        },
-        complete: () => {
-            res.status(200).json(data);
-            console.log(`Data retrieved for sensor box: ${sensor_box}`);
-        },
+    const sanitizedBox = sanitizeSensorBox(sensor_box);
+    if (!sanitizedBox) {
+        logSecurityWarning(req, 'sensor_box', sensor_box, 'Invalid characters or format');
+        return res.status(400).json({
+            error: 'Invalid sensor_box format',
+            detail: 'sensor_box must contain only alphanumeric characters, underscores, hyphens, and dots'
+        });
+    }
+
+    // Sanitize optional query parameters
+    const sanitizedType = sensor_type ? sanitizeSensorType(sensor_type) : null;
+    const sanitizedStart = sanitizeFluxTime(start_time, '-24h');
+    const sanitizedEnd = sanitizeFluxTime(end_time, 'now()');
+    const sanitizedLimit = sanitizeLimit(limit);
+    const sanitizedSort = sort === 'desc' || sort === 'asc' ? sort : null;
+
+    if (sensor_type && !sanitizedType) {
+        logSecurityWarning(req, 'sensor_type', sensor_type, 'Invalid characters or format');
+    }
+
+    console.log(`Getting data for sensor box: ${sanitizedBox}`);
+
+    const fluxQuery = buildSecureFluxQuery(bucket, {
+        sensor_box: sanitizedBox,
+        sensor_type: sanitizedType,
+        start_time: sanitizedStart,
+        end_time: sanitizedEnd,
+        limit: sanitizedLimit,
+        sort: sanitizedSort
     });
+
+    executeQuery(fluxQuery, res, `Data retrieved for sensor box: ${sanitizedBox}`);
 });
 
-// Get data by sensor type
+/**
+ * GET /api/sensors/data/type/:sensor_type
+ * Get data filtered by sensor type
+ */
 router.get('/data/type/:sensor_type', requireLogin, (req, res) => {
     const { sensor_type } = req.params;
-    const { sensor_box, start_time, end_time, limit } = req.query;
-    
-    console.log(`Getting data for sensor type: ${sensor_type}`);
-    let data = [];
-    let queryClient = influxClient.getQueryApi(organisation);
-    
-    const baseQuery = `from(bucket: "${bucket}")
- |> range(start: ${start_time || '-24h'}, stop: ${end_time || 'now()'})
- |> filter(fn: (r) => r._measurement == "sensor_data")
- |> filter(fn: (r) => r.sensor_type == "${sensor_type}")`;
- 
-    const fluxQuery = buildFluxQuery(baseQuery, { sensor_box, limit });
+    const { sensor_box, start_time, end_time, limit, sort } = req.query;
 
-    queryClient.queryRows(fluxQuery, {
-        next: (row, tableMeta) => {
-            const tableObject = tableMeta.toObject(row);
-            data.push(formatSensorData(tableObject));
-        },
-        error: (error) => {
-            console.error("Error getting sensor type data:", error);
-            res.status(500).json({ error: 'Error getting data.' });
-        },
-        complete: () => {
-            res.status(200).json(data);
-            console.log(`Data retrieved for sensor type: ${sensor_type}`);
-        },
+    // Validate required path parameter
+    const sanitizedType = sanitizeSensorType(sensor_type);
+    if (!sanitizedType) {
+        logSecurityWarning(req, 'sensor_type', sensor_type, 'Invalid characters or format');
+        return res.status(400).json({
+            error: 'Invalid sensor_type format',
+            detail: 'sensor_type must contain only alphanumeric characters, underscores, hyphens, and dots'
+        });
+    }
+
+    // Sanitize optional query parameters
+    const sanitizedBox = sensor_box ? sanitizeSensorBox(sensor_box) : null;
+    const sanitizedStart = sanitizeFluxTime(start_time, '-24h');
+    const sanitizedEnd = sanitizeFluxTime(end_time, 'now()');
+    const sanitizedLimit = sanitizeLimit(limit);
+    const sanitizedSort = sort === 'desc' || sort === 'asc' ? sort : null;
+
+    if (sensor_box && !sanitizedBox) {
+        logSecurityWarning(req, 'sensor_box', sensor_box, 'Invalid characters or format');
+    }
+
+    console.log(`Getting data for sensor type: ${sanitizedType}`);
+
+    const fluxQuery = buildSecureFluxQuery(bucket, {
+        sensor_box: sanitizedBox,
+        sensor_type: sanitizedType,
+        start_time: sanitizedStart,
+        end_time: sanitizedEnd,
+        limit: sanitizedLimit,
+        sort: sanitizedSort
     });
+
+    executeQuery(fluxQuery, res, `Data retrieved for sensor type: ${sanitizedType}`);
 });
 
-// Get unique sensor boxes
+/**
+ * GET /api/sensors/boxes
+ * Get unique sensor boxes
+ */
 router.get('/boxes', requireLogin, (req, res) => {
-    console.log("Getting unique sensor boxes");
-    let boxes = new Set();
-    let queryClient = influxClient.getQueryApi(organisation);
-    
-    let fluxQuery = `from(bucket: "${bucket}")
- |> range(start: -30d)
- |> filter(fn: (r) => r._measurement == "sensor_data")
+    console.log('Getting unique sensor boxes');
+
+    const boxes = new Set();
+    const queryClient = influxClient.getQueryApi(organisation);
+
+    // Build secure query (no user input, but still use secure method)
+    const fluxQuery = buildSecureFluxQuery(bucket, {
+        start_time: '-30d',
+        end_time: 'now()',
+        limit: 10000 // Large limit to get all unique values
+    }) + `
  |> keep(columns: ["sensor_box"])
  |> distinct(column: "sensor_box")`;
 
@@ -116,29 +210,40 @@ router.get('/boxes', requireLogin, (req, res) => {
         next: (row, tableMeta) => {
             const tableObject = tableMeta.toObject(row);
             if (tableObject.sensor_box) {
-                boxes.add(tableObject.sensor_box);
+                // Additional sanitization on output for safety
+                const sanitized = sanitizeSensorBox(tableObject.sensor_box);
+                if (sanitized) {
+                    boxes.add(sanitized);
+                }
             }
         },
         error: (error) => {
-            console.error("Error getting sensor boxes:", error);
+            console.error('Error getting sensor boxes:', error);
             res.status(500).json({ error: 'Error getting sensor boxes.' });
         },
         complete: () => {
             res.status(200).json(Array.from(boxes));
-            console.log("Sensor boxes retrieved successfully");
+            console.log('Sensor boxes retrieved successfully');
         },
     });
 });
 
-// Get unique sensor types
+/**
+ * GET /api/sensors/types
+ * Get unique sensor types
+ */
 router.get('/types', requireLogin, (req, res) => {
-    console.log("Getting unique sensor types");
-    let types = new Set();
-    let queryClient = influxClient.getQueryApi(organisation);
-    
-    let fluxQuery = `from(bucket: "${bucket}")
- |> range(start: -30d)
- |> filter(fn: (r) => r._measurement == "sensor_data")
+    console.log('Getting unique sensor types');
+
+    const types = new Set();
+    const queryClient = influxClient.getQueryApi(organisation);
+
+    // Build secure query (no user input, but still use secure method)
+    const fluxQuery = buildSecureFluxQuery(bucket, {
+        start_time: '-30d',
+        end_time: 'now()',
+        limit: 10000 // Large limit to get all unique values
+    }) + `
  |> keep(columns: ["sensor_type"])
  |> distinct(column: "sensor_type")`;
 
@@ -146,16 +251,20 @@ router.get('/types', requireLogin, (req, res) => {
         next: (row, tableMeta) => {
             const tableObject = tableMeta.toObject(row);
             if (tableObject.sensor_type) {
-                types.add(tableObject.sensor_type);
+                // Additional sanitization on output for safety
+                const sanitized = sanitizeSensorType(tableObject.sensor_type);
+                if (sanitized) {
+                    types.add(sanitized);
+                }
             }
         },
         error: (error) => {
-            console.error("Error getting sensor types:", error);
+            console.error('Error getting sensor types:', error);
             res.status(500).json({ error: 'Error getting sensor types.' });
         },
         complete: () => {
             res.status(200).json(Array.from(types));
-            console.log("Sensor types retrieved successfully");
+            console.log('Sensor types retrieved successfully');
         },
     });
 });
