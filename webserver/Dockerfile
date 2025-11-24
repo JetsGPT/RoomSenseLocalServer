@@ -1,8 +1,21 @@
 FROM node:20.11.1
 WORKDIR /webserver
 
-# Install openssl for secret generation and dos2unix for line ending conversion
-RUN apt-get update && apt-get install -y openssl dos2unix && rm -rf /var/lib/apt/lists/*
+# Install openssl for secret generation and docker CLI for swarm management
+RUN apt-get update && apt-get install -y \
+    openssl \
+    ca-certificates \
+    curl \
+    gnupg \ 
+    lsb-release \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Docker CLI (for swarm and secret management)
+RUN curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null \
+    && apt-get update \
+    && apt-get install -y docker-ce-cli \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package.json
 COPY package-lock.json package-lock.json
@@ -11,12 +24,10 @@ RUN npm install
 
 COPY . .
 
-# Copy and make scripts executable, then convert line endings
-COPY scripts/ /webserver/scripts/
-RUN dos2unix /webserver/scripts/*.sh && chmod +x /webserver/scripts/*.sh
+# Copy init script and make executable
+COPY scripts/init/init-swarm-secrets.sh /init-swarm-secrets.sh
+RUN chmod +x /init-swarm-secrets.sh
 
-# Create secrets directory for file-based secrets (non-swarm mode)
-RUN mkdir -p /webserver/secrets
-
-# Use startup script instead of direct node command
-CMD [ "/webserver/scripts/start.sh" ]
+# Mount Docker socket will be done at runtime
+# Start Node.js application directly
+CMD ["node", "src/app.js"]

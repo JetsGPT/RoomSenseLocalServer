@@ -1,0 +1,27 @@
+# Ensure .env files use LF line endings (not CRLF) to prevent secret/password issues
+*.env text eol=lf
+.env text eol=lf
+
+# Shell scripts should use LF
+*.sh text eol=lf
+
+# PowerShell scripts can use CRLF (Windows standard)
+*.ps1 text eol=crlf
+
+# Configuration files
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.conf text eol=lf
+
+# Source code files
+*.js text eol=lf
+*.ts text eol=lf
+*.jsx text eol=lf
+*.tsx text eol=lf
+
+# Documentation
+*.md text eol=lf
+*.txt text eol=lf
+

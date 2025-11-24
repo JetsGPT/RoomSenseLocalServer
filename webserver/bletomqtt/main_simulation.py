@@ -62,6 +62,8 @@ class SimulatedPeripheral:
         self._task: Optional[asyncio.Task] = None
         self._stopping = False
         self.base_values = {}
+        # Add random initial delay to stagger publishing across devices
+        self._initial_delay = random.uniform(0, DEFAULT_INTERVAL_SECONDS)
         
         # Initialize realistic base values for each sensor
         for sensor_type in sensor_types:
@@ -110,6 +112,9 @@ class SimulatedPeripheral:
     
     async def _send_sensor_data(self):
         """Continuously send sensor data to MQTT."""
+        # Stagger initial start to avoid all devices publishing at once
+        await asyncio.sleep(self._initial_delay)
+        
         while not self._stopping:
             for sensor_type in self.sensor_types:
                 value = self.generate_sensor_value(sensor_type)
@@ -126,8 +131,9 @@ class SimulatedPeripheral:
                 except Exception as e:
                     log.warning(f"[{self.address}] MQTT publish error: {e}")
             
-            # Wait before next iteration
-            await asyncio.sleep(DEFAULT_INTERVAL_SECONDS)
+            # Add small random jitter (±10%) to interval to prevent synchronization
+            jitter = random.uniform(-0.1, 0.1) * DEFAULT_INTERVAL_SECONDS
+            await asyncio.sleep(DEFAULT_INTERVAL_SECONDS + jitter)
     
     def start(self):
         """Starts the data sending task."""

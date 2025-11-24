@@ -1,55 +1,76 @@
-# Initialization Scripts
+# Scripts Directory
 
-This directory contains scripts for first-boot initialization and environment variable loading.
+This directory contains all scripts for the RoomSense Local Server project.
 
-## Scripts
+## Structure
 
-### `start.sh`
-Main entry point for the container. This script:
-- Checks if this is the first boot
-- Runs secret initialization if needed
-- Loads environment variables
-- Starts the Node.js application
-
-### `init-secrets.sh`
-Initializes Docker secrets on first boot:
-- Generates secure random values for sensitive data
-- Creates Docker secrets (swarm mode) or file-based secrets (compose mode)
-- Skips creation if secrets already exist or are provided in `.env` file
-
-### `load-env.sh`
-Loads environment variables with priority:
-1. `.env` file (if exists) - highest priority
-2. Docker secrets (if variable not in `.env`)
-3. compose.yaml environment variables
-4. Hardcoded defaults
-
-## Usage
-
-These scripts are automatically executed by the container on startup. You don't need to run them manually.
-
-## Manual Execution
-
-If you need to run them manually (for testing or debugging):
-
-```bash
-# From inside the container
-docker compose exec webserver bash
-
-# Run initialization
-/webserver/scripts/init-secrets.sh
-
-# Load environment
-source /webserver/scripts/load-env.sh
-
-# Check variables
-env | grep SESSION_SECRET
+```
+scripts/
+├── init/              # Initialization and startup scripts
+│   ├── start.sh       # Main startup script (initializes Swarm and secrets)
+│   └── init-swarm-secrets.sh  # Internal script for secret generation
+│
+└── entrypoints/       # Docker entrypoint wrappers for services
+    ├── telegraf-entrypoint.sh
+    ├── postgres-entrypoint-wrapper.sh
+    └── influxdb-entrypoint-wrapper.sh
 ```
 
-## File Locations
+## Initialization Scripts (`init/`)
 
-- Scripts: `/webserver/scripts/`
-- Secrets (file-based): `/webserver/secrets/`
-- Environment file: `/webserver/.env`
-- Initialization flag: `/var/lib/roomsense/.initialized`
+### `start.sh` / `start.ps1`
+Main startup script that:
+- Checks Docker availability
+- Initializes Docker Swarm (if needed)
+- Generates and creates Docker Swarm secrets
+- Starts all containers with `docker compose up -d`
+
+**Usage:**
+- **Linux/macOS/Git Bash:**
+  ```bash
+  ./scripts/init/start.sh
+  ```
+- **Windows PowerShell:**
+  ```powershell
+  .\scripts\init\start.ps1
+  ```
+
+### `init-swarm-secrets.sh`
+Internal script used for secret initialization. Generates cryptographically secure secrets using OpenSSL.
+
+## Utility Scripts
+
+### `generate-certs.sh` / `generate-certs.ps1`
+Generates self-signed SSL certificates for the webserver.
+
+**Usage:**
+- **Linux/macOS/Git Bash:**
+  ```bash
+  ./scripts/generate-certs.sh
+  ```
+- **Windows PowerShell:**
+  ```powershell
+  .\scripts\generate-certs.ps1
+  ```
+
+## Entrypoint Scripts (`entrypoints/`)
+
+These scripts are mounted into containers and load secrets from Docker Swarm before starting services.
+
+### `telegraf-entrypoint.sh`
+Loads InfluxDB token from `/run/secrets/influx_token` and sets `INFLUX_TOKEN` environment variable.
+
+### `postgres-entrypoint-wrapper.sh`
+Loads PostgreSQL password from `/run/secrets/pgpassword` and sets `POSTGRES_PASSWORD` environment variable before calling the original PostgreSQL entrypoint.
+
+### `influxdb-entrypoint-wrapper.sh`
+Loads InfluxDB password and token from Docker Swarm secrets and sets environment variables before calling the original InfluxDB entrypoint.
+
+## Security
+
+All scripts follow security best practices:
+- Secrets are read from Docker Swarm secrets (mounted at `/run/secrets/`)
+- No secrets are hardcoded or logged
+- Each service only receives the secrets it needs
+- Scripts use proper error handling and validation
 
