@@ -3,12 +3,13 @@ import cors from 'cors';
 import session from "express-session";
 import pg from "pg";
 import connectPgSimple from "connect-pg-simple";
-import dotenv from "dotenv";
 import https from 'https';
 import fs from 'fs';
 import ratePermissions from './middleware/ratePermissions.js';
+import { loadEnvironment } from './loadSecrets.js';
 
-dotenv.config();
+// Load environment variables from .env file and Docker Swarm secrets
+loadEnvironment();
 
 
 // Session sachen
@@ -16,9 +17,28 @@ dotenv.config();
 const { Pool } = pg;
 const PgSession = connectPgSimple(session);
 
+// Read password directly from Docker secret file to ensure exact match with postgres
+// This avoids any potential issues with process.env or trimming
+let dbPassword = process.env.PGPASSWORD || "password";
+try {
+    const secretPath = '/run/secrets/pgpassword';
+    if (fs.existsSync(secretPath)) {
+        const secret = fs.readFileSync(secretPath, 'utf8')
+            .replace(/\r\n/g, '')
+            .replace(/\n/g, '')
+            .replace(/\r/g, '');
+        if (secret) {
+            dbPassword = secret;
+            console.log('✓ Using PostgreSQL password from Docker secret file');
+        }
+    }
+} catch (error) {
+    console.warn(`⚠️  Could not read PostgreSQL secret file, using process.env.PGPASSWORD: ${error.message}`);
+}
+
 const pool = new Pool({
     user: process.env.PGUSER || "postgres",
-    password: process.env.PGPASSWORD || "password",
+    password: dbPassword,
     host: process.env.PGHOST || "postgres",
     port: process.env.PGPORT ? parseInt(process.env.PGPORT) : 5432,
     database: process.env.PGDATABASE || "user",
@@ -124,10 +144,21 @@ app.use('/testing', testingRouter);
 
 
 
-const httpsOptions = {
-    key: fs.readFileSync('./server.key'),
-    cert: fs.readFileSync('./server.cert'),
-};
+// SSL certificate configuration
+// Generate certificates if they don't exist:
+// openssl req -x509 -newkey rsa:4096 -keyout certs/server.key -out certs/server.cert -days 365 -nodes
+let httpsOptions;
+try {
+    httpsOptions = {
+        key: fs.readFileSync('./certs/server.key'),
+        cert: fs.readFileSync('./certs/server.cert'),
+    };
+} catch (error) {
+    console.error('⚠️  SSL certificates not found in ./certs/');
+    console.error('   Generate them with: openssl req -x509 -newkey rsa:4096 -keyout certs/server.key -out certs/server.cert -days 365 -nodes');
+    console.error('   Or update the certificate paths in src/app.js');
+    process.exit(1);
+}
 
 https.createServer(httpsOptions, app).listen(PORT, '0.0.0.0', async () => {
     console.log(`✅ HTTPS Server running on https://0.0.0.0:${PORT}`);

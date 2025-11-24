@@ -3,8 +3,26 @@ import https from 'https';
 import fs from 'fs';
 import path from 'path';
 
+// Read InfluxDB token directly from Docker secret file to ensure exact match with InfluxDB
+// This avoids any potential issues with process.env or trimming
+let token = process.env.INFLUX_TOKEN;
+try {
+    const secretPath = '/run/secrets/influx_token';
+    if (fs.existsSync(secretPath)) {
+        const secret = fs.readFileSync(secretPath, 'utf8')
+            .replace(/\r\n/g, '')
+            .replace(/\n/g, '')
+            .replace(/\r/g, '');
+        if (secret) {
+            token = secret;
+            console.log('✓ Using InfluxDB token from Docker secret file');
+        }
+    }
+} catch (error) {
+    console.warn(`⚠️  Could not read InfluxDB token secret file, using process.env.INFLUX_TOKEN: ${error.message}`);
+}
+
 // InfluxDB client configuration
-const token = process.env.INFLUX_TOKEN;
 const url = process.env.INFLUX_URL;
 const organisation = process.env.INFLUX_ORG;
 const bucket = process.env.INFLUX_BUCKET;

@@ -4,10 +4,30 @@ import { requireLogin, requireRole } from '../auth/auth.js';
 
 const router = express.Router();
 
+import fs from 'fs';
+
 const { Client } = pg
+
+// Read password directly from Docker secret file to ensure exact match with postgres
+let dbPassword = process.env.PGPASSWORD || 'password';
+try {
+    const secretPath = '/run/secrets/pgpassword';
+    if (fs.existsSync(secretPath)) {
+        const secret = fs.readFileSync(secretPath, 'utf8')
+            .replace(/\r\n/g, '')
+            .replace(/\n/g, '')
+            .replace(/\r/g, '');
+        if (secret) {
+            dbPassword = secret;
+        }
+    }
+} catch (error) {
+    // Fall back to process.env.PGPASSWORD if secret file can't be read
+}
+
 const options = {
     user: process.env.PGUSER || 'postgres',
-    password: process.env.PGPASSWORD || 'password',
+    password: dbPassword,
     host: process.env.PGHOST || 'postgres',
     port: process.env.PGPORT ? parseInt(process.env.PGPORT) : 5432,
     database: process.env.PGDATABASE || 'user',

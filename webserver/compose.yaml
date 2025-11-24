@@ -1,21 +1,44 @@
+# Docker Compose file with Docker Swarm secrets
+# Security: Secrets are managed by Docker Swarm and only accessible to services that need them
+# Note: This file is used with 'docker stack deploy' for Swarm mode
+
+# Define secrets (will be created by init service)
+secrets:
+  session_secret:
+    external: true  # Created by init service
+  pgpassword:
+    external: true  # Created by init service
+  influx_password:
+    external: true  # Created by init service
+  influx_token:
+    external: true  # Created by init service
+
 services:
+  # Note: Docker Swarm and secrets are initialized by scripts/init/start.sh script
+  # before containers are started. The init service is no longer needed
+  # as secrets must exist before services can reference them.
+
+  # Main webserver application
   webserver:
-    build: .
-    # Environment variables are loaded by startup script from .env file or Docker secrets
-    # Sensitive values (SESSION_SECRET, passwords, tokens) are loaded from secrets on first boot
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-      - "host.docker.internal:172.17.0.1"
-    restart: unless-stopped
+    image: roomsense-webserver:latest
+    # Note: container_name and extra_hosts not supported in stack deploy
+    # Images must be built first using: docker compose build
+    deploy:
+      restart_policy:
+        condition: any
+      replicas: 1
+    # Mount .env file for non-sensitive configuration and certs
     volumes:
-      # Mount secrets directory for file-based secrets (non-swarm mode)
-      - ./secrets:/webserver/secrets
-      # Persist initialization flag
-      - roomsense_init:/var/lib/roomsense
-    # Environment variables - these are fallbacks, .env file takes precedence
-    # Sensitive values are loaded from secrets by the startup script
+      - ./.env:/webserver/.env:ro
+      - ./certs:/webserver/certs:ro
+    # Only grant access to secrets this service needs
+    secrets:
+      - session_secret
+      - pgpassword
+      - influx_password
+      - influx_token
     environment:
-      # Non-sensitive defaults (can be overridden by .env or secrets)
+      # Non-sensitive defaults (can be overridden by .env file)
       PGHOST: ${PGHOST:-postgres}
       PGUSER: ${PGUSER:-postgres}
       PGPORT: ${PGPORT:-5432}
@@ -31,91 +54,109 @@ services:
       TRUST_PROXY: ${TRUST_PROXY:-0}
       RATE_LIMIT_TRUST_PROXY: ${RATE_LIMIT_TRUST_PROXY:-0}
       PERM_CACHE_MS: ${PERM_CACHE_MS:-30000}
-      # Sensitive values - loaded from .env or secrets by startup script
-      # These are optional here as they'll be set by the script
-      SESSION_SECRET: ${SESSION_SECRET:-}
-      PGPASSWORD: ${PGPASSWORD:-}
-      INFLUX_PASSWORD: ${INFLUX_PASSWORD:-}
-      INFLUX_TOKEN: ${INFLUX_TOKEN:-}
-    links:
-      - "postgres:postgres"
-      - "influxdb:sensors"
+    # Note: links and depends_on not needed in Swarm mode, services are discoverable by name
     ports:
       - "8081:8081"  # HTTPS port for local network access
-    depends_on:
-      - postgres
-      - influxdb
-      - blegateway
+    networks:
+      - roomsense-network
+
+  # PostgreSQL database
   postgres:
     image: postgres:17.4
-    restart: unless-stopped
-    # Note: Only PostgreSQL-specific variables - no access to other secrets
+    deploy:
+      restart_policy:
+        condition: any
+      replicas: 1
+    # Only grant access to PostgreSQL password secret
+    secrets:
+      - pgpassword
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./postgres-init:/docker-entrypoint-initdb.d
+      - ./scripts/entrypoints/postgres-entrypoint-wrapper.sh:/postgres-entrypoint-wrapper.sh:ro
     ports:
       - "5432:5432"
     environment:
       POSTGRES_USER: ${PGUSER:-postgres}
-      POSTGRES_PASSWORD: ${PGPASSWORD:-password}
+      # Password will be loaded from Docker secret by entrypoint wrapper
       POSTGRES_DB: ${PGDATABASE:-user}
+    entrypoint: ["/bin/bash", "/postgres-entrypoint-wrapper.sh", "postgres"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - roomsense-network
+
+  # InfluxDB time-series database
   influxdb:
     image: influxdb:2.7.11
-    # Note: Only InfluxDB-specific variables - no access to other secrets
+    # Only grant access to InfluxDB secrets
+    secrets:
+      - influx_password
+      - influx_token
     ports:
       - "8086:8086"
     volumes:
       - influxdb_data:/var/lib/influxdb2
       - ./certs:/certs:ro
-    restart: unless-stopped
+      - ./scripts/entrypoints/influxdb-entrypoint-wrapper.sh:/influxdb-entrypoint-wrapper.sh:ro
     environment:
       DOCKER_INFLUXDB_INIT_MODE: setup
-      # Default values for first boot initialization (can be overridden by .env)
       DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUX_USERNAME:-admin}
-      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_PASSWORD:-admin123}
+      # Password and token will be loaded from Docker secrets by entrypoint wrapper
       DOCKER_INFLUXDB_INIT_ORG: ${INFLUX_ORG:-RoomSense}
       DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUX_BUCKET:-sensors_data}
-      # Token: If not provided, InfluxDB will generate one automatically
-      # On first boot, webserver init script will generate a token and store it
-      # For subsequent boots, use the token from .env or secrets
-      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN:-}
       INFLUXD_TLS_CERT: /certs/influxdb-selfsigned.crt
       INFLUXD_TLS_KEY: /certs/influxdb-selfsigned.key
+    entrypoint: ["/bin/bash", "/influxdb-entrypoint-wrapper.sh", "influxd"]
+    deploy:
+      restart_policy:
+        condition: any
+      replicas: 1
+    networks:
+      - roomsense-network
+
+  # BLE Gateway service
   blegateway:
-    build: ./bletomqtt
-    container_name: blegateway
-    privileged: true
-    # Note: Only MQTT variables - no access to database or other secrets
+    image: roomsense-blegateway:latest
+    # Note: privileged mode and network_mode: host have limitations in Swarm
+    # For full host networking, consider deploying blegateway separately
     volumes:
       - ./bletomqtt:/bletomqtt
       # D-Bus volumes (Linux only - will fail on Windows but container will still start)
       - /run/dbus:/run/dbus:ro
       - /var/run/dbus:/var/run/dbus:ro
     environment:
-      # For Raspberry Pi: use 'localhost' because blegateway uses host networking
-      # For Windows/development: can use 'mosquitto' if not using host networking
-      - MQTT_BROKER=${MQTT_BROKER:-localhost}
+      # In Swarm mode, use service name for MQTT broker
+      # For Raspberry Pi with host networking, override with localhost in .env
+      - MQTT_BROKER=${MQTT_BROKER:-mosquitto}
       - MQTT_PORT=${MQTT_PORT:-1883}
       - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
     # Port mapping for Windows/PC testing (use network_mode: host on Raspberry Pi)
     # For Raspberry Pi: uncomment network_mode below and comment out ports
-   # ports:
-      #- "8080:8080"
-    depends_on:
-      - mosquitto
-    restart: unless-stopped
-    devices:
-      - /dev:/dev
-    cap_add:
-      - NET_ADMIN
-      - SYS_ADMIN
-      - NET_RAW
-    # Uncomment below and comment out ports: for Raspberry Pi
-    network_mode: host
+    # ports:
+    #   - "8080:8080"
+    # Note: depends_on, devices, and cap_add have limitations in Swarm mode
+    deploy:
+      restart_policy:
+        condition: any
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager  # Run on manager node for better device access
+    networks:
+      - roomsense-network
 
+  # MQTT Broker
   mosquitto:
     image: eclipse-mosquitto:latest
-    restart: unless-stopped
+    deploy:
+      restart_policy:
+        condition: any
+      replicas: 1
     ports:
       - "1883:1883"
       - "9001:9001"
@@ -124,24 +165,38 @@ services:
       - ./mosquitto/data:/mosquitto/data
       - ./mosquitto/log:/mosquitto/log
     command: mosquitto -c /mosquitto/config/mosquitto.conf
+    networks:
+      - roomsense-network
 
+  # Telegraf - metrics collection
   telegraf:
     image: telegraf:1.32
-    restart: unless-stopped
-    # Note: Only InfluxDB variables needed for writing data
+    deploy:
+      restart_policy:
+        condition: any
+      replicas: 1
+    # Only grant access to InfluxDB token (for writing metrics)
+    secrets:
+      - influx_token
     volumes:
       - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+      - ./scripts/entrypoints/telegraf-entrypoint.sh:/telegraf-entrypoint.sh:ro
     environment:
-      INFLUX_TOKEN: ${INFLUX_TOKEN}
-      INFLUX_ORG: ${INFLUX_ORG}
-      INFLUX_BUCKET: ${INFLUX_BUCKET}
-    depends_on:
-      - mosquitto
-      - influxdb
+      INFLUX_ORG: ${INFLUX_ORG:-RoomSense}
+      INFLUX_BUCKET: ${INFLUX_BUCKET:-sensors_data}
+      # Token will be loaded from /run/secrets/influx_token by entrypoint
+    entrypoint: ["/bin/sh", "/telegraf-entrypoint.sh"]
+    # Note: depends_on not supported in stack deploy, services are discoverable by name
+    networks:
+      - roomsense-network
 
+  # Nginx Proxy Manager
   nginx-proxy-manager:
     image: 'jc21/nginx-proxy-manager:latest'
-    restart: unless-stopped
+    deploy:
+      restart_policy:
+        condition: any
+      replicas: 1
     ports:
       - '80:80'      # HTTP
       - '81:81'      # Admin UI
@@ -151,29 +206,18 @@ services:
       - npm_letsencrypt:/etc/letsencrypt
     environment:
       DB_SQLITE_FILE: "/data/database.sqlite"
-    depends_on:
-      - webserver
-  # blegateway:
-  #   build: ./bletomqtt
-  #   container_name: blegateway
-  #   privileged: true
-  #   volumes:
-  #     - ./bletomqtt:/bletomqtt
-  #     - /run/dbus:/run/dbus:ro
-  #   environment:
-  #     - MQTT_BROKER=mosquitto
-  #   depends_on:
-  #     - mosquitto
-  #   restart: unless-stopped
-  #   devices:
-  #     - /dev:/dev
-  #   cap_add:
-  #     - NET_ADMIN
-  #     - SYS_ADMIN
+    # Note: depends_on not supported in stack deploy, services are discoverable by name
+    networks:
+      - roomsense-network
+
+networks:
+  roomsense-network:
+    # Overlay network for Docker Swarm
+    driver: overlay
+    attachable: true
 
 volumes:
   pgdata:
   influxdb_data:
   npm_data:
   npm_letsencrypt:
-  roomsense_init:  # Persists initialization state
