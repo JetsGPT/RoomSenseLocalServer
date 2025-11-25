@@ -140,6 +140,7 @@ CREATE TABLE IF NOT EXISTS public.ble_connections (
   id SERIAL PRIMARY KEY,
   address VARCHAR(17) NOT NULL UNIQUE, -- MAC address format: XX:XX:XX:XX:XX:XX
   name VARCHAR(255),
+  display_name VARCHAR(255), -- User-friendly alias
   connected_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
   last_seen TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
   is_active BOOLEAN DEFAULT TRUE,

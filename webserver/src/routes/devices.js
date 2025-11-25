@@ -9,7 +9,7 @@ const { Pool } = pg;
 let pool = null;
 
 // Dev mode: bypass auth if DEV_BYPASS_AUTH is set
-const authMiddleware = process.env.DEV_BYPASS_AUTH === '1' 
+const authMiddleware = process.env.DEV_BYPASS_AUTH === '1'
     ? (req, res, next) => next()  // Skip auth in dev mode
     : requireLogin;  // Require auth in production
 
@@ -71,7 +71,7 @@ async function proxyToGateway(res, url, options, timeout = REQUEST_TIMEOUT_MS) {
     } catch (error) {
         if (error.name === 'AbortError' || error.name === 'TimeoutError') {
             console.warn(`BLE gateway request to ${url} timed out after ${timeout}ms`);
-            return res.status(504).json({ 
+            return res.status(504).json({
                 error: 'Request timeout',
                 detail: `Gateway request exceeded ${timeout}ms`
             });
@@ -79,14 +79,14 @@ async function proxyToGateway(res, url, options, timeout = REQUEST_TIMEOUT_MS) {
 
         if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
             console.error('Cannot connect to BLE gateway:', error.message);
-            return res.status(503).json({ 
+            return res.status(503).json({
                 error: 'BLE bridge unavailable',
                 detail: 'Cannot connect to BLE gateway container.'
             });
         }
 
         console.error('Error calling BLE gateway:', error);
-        return res.status(500).json({ 
+        return res.status(500).json({
             error: 'Internal server error',
             detail: error.message || 'Unexpected error occurred'
         });
@@ -95,17 +95,93 @@ async function proxyToGateway(res, url, options, timeout = REQUEST_TIMEOUT_MS) {
 
 // --- Original Endpoint ---
 
+// --- Original Endpoint ---
+
 /**
  * GET /api/devices/scan
  * Triggers a BLE scan via the Python BLE bridge.
+ * Overlays known device names from the database over the raw advertised names.
  */
 router.get('/scan', authMiddleware, async (req, res) => {
-    await proxyToGateway(
-        res, 
-        `${BLE_GATEWAY_URL}/scan`, 
-        { method: 'GET' }, 
-        SCAN_TIMEOUT_MS // Use longer timeout for scanning
-    );
+    try {
+        // 1. Start the gateway scan (this takes ~8-10 seconds)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), SCAN_TIMEOUT_MS);
+
+        const response = await fetch(`${BLE_GATEWAY_URL}/scan`, {
+            method: 'GET',
+            signal: controller.signal,
+            headers: { 'Content-Type': 'application/json' },
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            // Handle errors (same as proxyToGateway logic)
+            const errorText = await response.text();
+            let detail = 'No details provided';
+            try { detail = JSON.parse(errorText).detail || detail; } catch (e) { }
+
+            if (response.status === 503) return res.status(503).json({ error: 'BLE bridge service unavailable', detail });
+            if (response.status === 504) return res.status(504).json({ error: 'BLE operation timed out', detail });
+            return res.status(502).json({ error: 'BLE bridge returned an error', detail });
+        }
+
+        const scanResults = await response.json();
+
+        // 2. Fetch known names from the database
+        if (pool) {
+            try {
+                const dbResult = await pool.query('SELECT address, name FROM ble_connections');
+                const knownDevices = new Map();
+                dbResult.rows.forEach(row => {
+                    if (row.name) knownDevices.set(row.address, row.name);
+                });
+                // 3. Overlay known names onto scan results
+                // scanResults is expected to be an array of { address, name }
+                if (Array.isArray(scanResults)) {
+                    scanResults.forEach(device => {
+                        if (knownDevices.has(device.address)) {
+                            // Use display_name if available, otherwise keep technical name
+                            const known = knownDevices.get(device.address);
+                            if (known.display_name) {
+                                device.name = known.display_name;
+                                device.original_name = known.name; // Keep track of technical ID
+                            } else if (known.name) {
+                                device.name = known.name;
+                            }
+                        }
+                    });
+                }
+                if (Array.isArray(scanResults)) {
+                    scanResults.forEach(device => {
+                        if (knownDevices.has(device.address)) {
+                            // Use display_name if available, otherwise keep technical name
+                            const known = knownDevices.get(device.address);
+                            if (known.display_name) {
+                                device.name = known.display_name;
+                                device.original_name = known.name; // Keep track of technical ID
+                            } else if (known.name) {
+                                device.name = known.name;
+                            }
+                        }
+                    });
+                }
+            } catch (dbError) {
+                console.error('[BLE] Failed to fetch known devices from DB:', dbError);
+                // Continue with raw scan results if DB fails
+            }
+        }
+
+        return res.status(200).json(scanResults);
+
+    } catch (error) {
+        if (error.name === 'AbortError' || error.name === 'TimeoutError') {
+            return res.status(504).json({ error: 'Request timeout', detail: `Scan exceeded ${SCAN_TIMEOUT_MS}ms` });
+        }
+        console.error('Error during scan:', error);
+        return res.status(500).json({ error: 'Internal server error', detail: error.message });
+    }
 });
 
 // --- New Endpoints ---
@@ -113,13 +189,61 @@ router.get('/scan', authMiddleware, async (req, res) => {
 /**
  * GET /api/devices/connections
  * Gets the list of currently active BLE connections from the gateway.
+ * Overlays display names from the database.
  */
 router.get('/connections', authMiddleware, async (req, res) => {
-    await proxyToGateway(
-        res,
-        `${BLE_GATEWAY_URL}/connections`,
-        { method: 'GET' }
-    );
+    try {
+        // 1. Get raw connections from gateway
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+        const response = await fetch(`${BLE_GATEWAY_URL}/connections`, {
+            method: 'GET',
+            signal: controller.signal,
+            headers: { 'Content-Type': 'application/json' },
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            // Error handling similar to proxyToGateway
+            const errorText = await response.text();
+            let detail = 'No details provided';
+            try { detail = JSON.parse(errorText).detail || detail; } catch (e) { }
+            return res.status(response.status).json({ error: 'BLE gateway error', detail });
+        }
+
+        const connections = await response.json();
+
+        // 2. Overlay display names from DB
+        if (pool && Array.isArray(connections)) {
+            try {
+                const dbResult = await pool.query('SELECT address, name, display_name FROM ble_connections');
+                const knownDevices = new Map();
+                dbResult.rows.forEach(row => knownDevices.set(row.address, row));
+
+                connections.forEach(conn => {
+                    if (knownDevices.has(conn.address)) {
+                        const known = knownDevices.get(conn.address);
+                        conn.original_name = known.name; // Technical ID
+                        if (known.display_name) {
+                            conn.name = known.display_name; // Display alias
+                        } else if (known.name) {
+                            conn.name = known.name;
+                        }
+                    }
+                });
+            } catch (dbError) {
+                console.error('[BLE] Failed to fetch known devices for connections:', dbError);
+            }
+        }
+
+        return res.status(200).json(connections);
+
+    } catch (error) {
+        console.error('Error getting connections:', error);
+        return res.status(500).json({ error: 'Internal server error', detail: error.message });
+    }
 });
 
 /**
@@ -132,10 +256,32 @@ router.post('/connect/:address', authMiddleware, async (req, res) => {
     if (!address) {
         return res.status(400).json({ error: 'Missing device address' });
     }
-    
-    // Get device name from request body if provided, or from scan results
+
+    // Get device name from request body if provided
+    // This is treated as the technical ID (name) if it's a new device
     const deviceName = req.body?.name || null;
-    
+
+    // Check for name uniqueness if a name is provided
+    if (deviceName && pool) {
+        try {
+            // Check if name is used as 'name' OR 'display_name' by another device
+            const nameCheck = await pool.query(
+                `SELECT address FROM ble_connections 
+                 WHERE (name = $1 OR display_name = $1) 
+                 AND address != $2`,
+                [deviceName, address]
+            );
+            if (nameCheck.rows.length > 0) {
+                return res.status(409).json({
+                    error: 'Name conflict',
+                    detail: `The name '${deviceName}' is already used by device ${nameCheck.rows[0].address}`
+                });
+            }
+        } catch (dbError) {
+            console.error('[BLE] DB error checking name uniqueness:', dbError);
+        }
+    }
+
     // First, try to connect via the gateway
     try {
         const controller = new AbortController();
@@ -158,7 +304,7 @@ router.post('/connect/:address', authMiddleware, async (req, res) => {
                 errorJson = { detail: errorText || 'Unknown error' };
             }
             const detail = errorJson.detail || 'No details provided';
-            
+
             switch (response.status) {
                 case 404:
                     return res.status(404).json({ error: 'Not Found', detail });
@@ -172,16 +318,18 @@ router.post('/connect/:address', authMiddleware, async (req, res) => {
         }
 
         const data = await response.json();
-        
+
         // If connection successful, persist to database
         if (pool && data.status === 'connecting') {
             try {
+                // Only update 'name' (technical ID) if it's not set or if explicitly provided for new device
+                // We do NOT update display_name here, that's done via rename endpoint
                 await pool.query(
                     `INSERT INTO ble_connections (address, name, connected_at, last_seen, is_active)
                      VALUES ($1, $2, NOW(), NOW(), TRUE)
                      ON CONFLICT (address) 
                      DO UPDATE SET 
-                         name = COALESCE(EXCLUDED.name, ble_connections.name),
+                         name = COALESCE(ble_connections.name, $2), -- Keep existing name if present
                          connected_at = NOW(),
                          last_seen = NOW(),
                          is_active = TRUE`,
@@ -190,30 +338,77 @@ router.post('/connect/:address', authMiddleware, async (req, res) => {
                 console.log(`[BLE] Persisted connection for device ${address}`);
             } catch (dbError) {
                 console.error(`[BLE] Failed to persist connection to database:`, dbError);
-                // Don't fail the request if DB write fails, connection is still active
             }
         }
-        
+
         return res.status(200).json(data);
-        
+
     } catch (error) {
         if (error.name === 'AbortError' || error.name === 'TimeoutError') {
-            return res.status(504).json({ 
+            return res.status(504).json({
                 error: 'Request timeout',
                 detail: `Gateway request exceeded ${REQUEST_TIMEOUT_MS}ms`
             });
         }
         if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
-            return res.status(503).json({ 
+            return res.status(503).json({
                 error: 'BLE bridge unavailable',
                 detail: 'Cannot connect to BLE gateway container.'
             });
         }
         console.error('Error calling BLE gateway:', error);
-        return res.status(500).json({ 
+        return res.status(500).json({
             error: 'Internal server error',
             detail: error.message || 'Unexpected error occurred'
         });
+    }
+});
+
+/**
+ * PATCH /api/devices/connect/:address
+ * Updates the display name (alias) of a device.
+ */
+router.patch('/connect/:address', authMiddleware, async (req, res) => {
+    const { address } = req.params;
+    const { display_name } = req.body;
+
+    if (!address) return res.status(400).json({ error: 'Missing address' });
+    if (!pool) return res.status(503).json({ error: 'Database not available' });
+
+    try {
+        // Check uniqueness for display_name
+        if (display_name) {
+            const nameCheck = await pool.query(
+                `SELECT address FROM ble_connections 
+                 WHERE (name = $1 OR display_name = $1) 
+                 AND address != $2`,
+                [display_name, address]
+            );
+            if (nameCheck.rows.length > 0) {
+                return res.status(409).json({
+                    error: 'Name conflict',
+                    detail: `The name '${display_name}' is already used.`
+                });
+            }
+        }
+
+        const result = await pool.query(
+            `UPDATE ble_connections 
+             SET display_name = $1, updated_at = NOW()
+             WHERE address = $2
+             RETURNING address, name, display_name`,
+            [display_name || null, address]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Device not found' });
+        }
+
+        return res.status(200).json(result.rows[0]);
+
+    } catch (error) {
+        console.error('[BLE] Error updating display name:', error);
+        return res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -250,7 +445,7 @@ router.post('/disconnect/:address', authMiddleware, async (req, res) => {
                 errorJson = { detail: errorText || 'Unknown error' };
             }
             const detail = errorJson.detail || 'No details provided';
-            
+
             switch (response.status) {
                 case 404:
                     return res.status(404).json({ error: 'Not Found', detail });
@@ -262,7 +457,7 @@ router.post('/disconnect/:address', authMiddleware, async (req, res) => {
         }
 
         const data = await response.json();
-        
+
         // If disconnection successful, mark as inactive in database
         if (pool && data.status === 'disconnected') {
             try {
@@ -278,24 +473,24 @@ router.post('/disconnect/:address', authMiddleware, async (req, res) => {
                 // Don't fail the request if DB write fails
             }
         }
-        
+
         return res.status(200).json(data);
-        
+
     } catch (error) {
         if (error.name === 'AbortError' || error.name === 'TimeoutError') {
-            return res.status(504).json({ 
+            return res.status(504).json({
                 error: 'Request timeout',
                 detail: `Gateway request exceeded ${REQUEST_TIMEOUT_MS}ms`
             });
         }
         if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
-            return res.status(503).json({ 
+            return res.status(503).json({
                 error: 'BLE bridge unavailable',
                 detail: 'Cannot connect to BLE gateway container.'
             });
         }
         console.error('Error calling BLE gateway:', error);
-        return res.status(500).json({ 
+        return res.status(500).json({
             error: 'Internal server error',
             detail: error.message || 'Unexpected error occurred'
         });
