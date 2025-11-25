@@ -148,6 +148,52 @@ init_secrets() {
     log_info "All secrets initialized successfully!"
 }
 
+# Check and create required directories and files for bind mounts
+check_mounts() {
+    log_step "Checking required mount points..."
+    
+    # Create .env file if it doesn't exist
+    if [ ! -f ".env" ]; then
+        log_warn ".env file not found, creating empty one (defaults will be used)"
+        touch .env
+    fi
+    
+    # Create mosquitto directories
+    mkdir -p mosquitto/config mosquitto/data mosquitto/log
+    
+    # Create mosquitto config if missing
+    if [ ! -f "mosquitto/config/mosquitto.conf" ]; then
+        log_info "Creating default mosquitto.conf..."
+        cat > mosquitto/config/mosquitto.conf <<EOF
+persistence true
+persistence_location /mosquitto/data/
+log_dest file /mosquitto/log/mosquitto.log
+listener 1883
+allow_anonymous true
+EOF
+    fi
+    
+    # Create other required directories
+    mkdir -p certs
+    mkdir -p telegraf
+    mkdir -p postgres-init
+    mkdir -p bletomqtt
+    
+    # Create dummy certs if missing (to prevent mount errors)
+    if [ ! -f "certs/server.key" ] || [ ! -f "certs/server.cert" ]; then
+        log_warn "SSL certificates missing. Generating self-signed certificates..."
+        openssl req -x509 -newkey rsa:4096 -keyout certs/server.key -out certs/server.cert -days 365 -nodes -subj "/CN=localhost" 2>/dev/null
+    fi
+    
+    # Create influxdb self-signed certs if missing
+    if [ ! -f "certs/influxdb-selfsigned.key" ] || [ ! -f "certs/influxdb-selfsigned.crt" ]; then
+        log_warn "InfluxDB certificates missing. Generating self-signed certificates..."
+        openssl req -x509 -newkey rsa:4096 -keyout certs/influxdb-selfsigned.key -out certs/influxdb-selfsigned.crt -days 365 -nodes -subj "/CN=influxdb" 2>/dev/null
+    fi
+    
+    log_info "Mount points verified"
+}
+
 # Main execution
 main() {
     echo "==========================================="
@@ -163,6 +209,9 @@ main() {
     
     # Initialize secrets
     init_secrets
+    
+    # Check and create required mount points
+    check_mounts
     
     echo ""
     log_step "Building images (if needed)..."
