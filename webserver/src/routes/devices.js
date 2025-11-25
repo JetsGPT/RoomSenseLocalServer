@@ -527,68 +527,81 @@ export async function restorePersistedConnections() {
         return;
     }
 
-    try {
-        // Get all active connections from database
-        const result = await pool.query(
-            `SELECT address, name FROM ble_connections WHERE is_active = TRUE`
-        );
+    // Retry logic for database connection
+    let result;
+    const MAX_RETRIES = 10;
+    const RETRY_DELAY = 3000;
 
-        if (result.rows.length === 0) {
-            console.log('[BLE] No persisted connections to restore');
-            return;
-        }
-
-        console.log(`[BLE] Restoring ${result.rows.length} persisted connection(s)...`);
-
-        // Restore each connection
-        const restorePromises = result.rows.map(async (row) => {
-            const { address, name } = row;
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-                const response = await fetch(`${BLE_GATEWAY_URL}/connect/${encodeURIComponent(address)}`, {
-                    method: 'POST',
-                    signal: controller.signal,
-                    headers: { 'Content-Type': 'application/json' },
-                });
-
-                clearTimeout(timeoutId);
-
-                if (response.ok) {
-                    console.log(`[BLE] Successfully restored connection to ${address} (${name || 'unknown'})`);
-                    // Update last_seen timestamp
-                    await pool.query(
-                        `UPDATE ble_connections SET last_seen = NOW() WHERE address = $1`,
-                        [address]
-                    );
-                } else {
-                    console.warn(`[BLE] Failed to restore connection to ${address}: ${response.status}`);
-                    // Mark as inactive if connection fails
-                    await pool.query(
-                        `UPDATE ble_connections SET is_active = FALSE WHERE address = $1`,
-                        [address]
-                    );
-                }
-            } catch (error) {
-                console.error(`[BLE] Error restoring connection to ${address}:`, error.message);
-                // Mark as inactive on error
-                try {
-                    await pool.query(
-                        `UPDATE ble_connections SET is_active = FALSE WHERE address = $1`,
-                        [address]
-                    );
-                } catch (dbError) {
-                    console.error(`[BLE] Failed to update database for ${address}:`, dbError);
-                }
+    for (let i = 0; i < MAX_RETRIES; i++) {
+        try {
+            // Get all active connections from database
+            result = await pool.query(
+                `SELECT address, name FROM ble_connections WHERE is_active = TRUE`
+            );
+            break; // Success, exit loop
+        } catch (error) {
+            console.warn(`[BLE] Database connection attempt ${i + 1}/${MAX_RETRIES} failed: ${error.message}`);
+            if (i === MAX_RETRIES - 1) {
+                console.error('[BLE] Failed to connect to database after multiple attempts, skipping connection restoration');
+                return;
             }
-        });
-
-        await Promise.allSettled(restorePromises);
-        console.log('[BLE] Connection restoration completed');
-    } catch (error) {
-        console.error('[BLE] Error during connection restoration:', error);
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+        }
     }
+
+    if (!result || result.rows.length === 0) {
+        console.log('[BLE] No persisted connections to restore');
+        return;
+    }
+
+    console.log(`[BLE] Restoring ${result.rows.length} persisted connection(s)...`);
+
+    // Restore each connection
+    const restorePromises = result.rows.map(async (row) => {
+        const { address, name } = row;
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+            const response = await fetch(`${BLE_GATEWAY_URL}/connect/${encodeURIComponent(address)}`, {
+                method: 'POST',
+                signal: controller.signal,
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            clearTimeout(timeoutId);
+
+            if (response.ok) {
+                console.log(`[BLE] Successfully restored connection to ${address} (${name || 'unknown'})`);
+                // Update last_seen timestamp
+                await pool.query(
+                    `UPDATE ble_connections SET last_seen = NOW() WHERE address = $1`,
+                    [address]
+                );
+            } else {
+                console.warn(`[BLE] Failed to restore connection to ${address}: ${response.status}`);
+                // Mark as inactive if connection fails
+                await pool.query(
+                    `UPDATE ble_connections SET is_active = FALSE WHERE address = $1`,
+                    [address]
+                );
+            }
+        } catch (error) {
+            console.error(`[BLE] Error restoring connection to ${address}:`, error.message);
+            // Mark as inactive on error
+            try {
+                await pool.query(
+                    `UPDATE ble_connections SET is_active = FALSE WHERE address = $1`,
+                    [address]
+                );
+            } catch (dbError) {
+                console.error(`[BLE] Failed to update database for ${address}:`, dbError);
+            }
+        }
+    });
+
+    await Promise.allSettled(restorePromises);
+    console.log('[BLE] Connection restoration completed');
 }
 
 export default router;
