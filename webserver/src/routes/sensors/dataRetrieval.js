@@ -106,7 +106,7 @@ router.get('/data', requireLogin, (req, res) => {
  * GET /api/sensors/data/box/:sensor_box
  * Get data filtered by sensor box
  */
-router.get('/data/box/:sensor_box', requireLogin, (req, res) => {
+router.get('/data/box/:sensor_box', requireLogin, async (req, res) => {
     const { sensor_box } = req.params;
     const { sensor_type, start_time, end_time, limit, sort } = req.query;
 
@@ -130,10 +130,30 @@ router.get('/data/box/:sensor_box', requireLogin, (req, res) => {
         logSecurityWarning(req, 'sensor_type', sensor_type, 'Invalid characters or format');
     }
 
-    console.log(`Getting data for sensor box: ${sanitizedBox}`);
+    // Resolve display_name to technical name if possible
+    let technicalName = sanitizedBox;
+    const pool = req.app.locals.pool;
+
+    if (pool) {
+        try {
+            // Check if the provided box name is actually a display name
+            const result = await pool.query(
+                'SELECT name FROM ble_connections WHERE display_name = $1',
+                [sanitizedBox]
+            );
+            if (result.rows.length > 0 && result.rows[0].name) {
+                technicalName = result.rows[0].name;
+                console.log(`Resolved alias '${sanitizedBox}' to technical ID '${technicalName}'`);
+            }
+        } catch (dbError) {
+            console.error('Error resolving sensor box alias:', dbError);
+        }
+    }
+
+    console.log(`Getting data for sensor box: ${technicalName} (requested: ${sanitizedBox})`);
 
     const fluxQuery = buildSecureFluxQuery(bucket, {
-        sensor_box: sanitizedBox,
+        sensor_box: technicalName,
         sensor_type: sanitizedType,
         start_time: sanitizedStart,
         end_time: sanitizedEnd,
@@ -141,7 +161,7 @@ router.get('/data/box/:sensor_box', requireLogin, (req, res) => {
         sort: sanitizedSort
     });
 
-    executeQuery(fluxQuery, res, `Data retrieved for sensor box: ${sanitizedBox}`);
+    executeQuery(fluxQuery, res, `Data retrieved for sensor box: ${technicalName}`);
 });
 
 /**
