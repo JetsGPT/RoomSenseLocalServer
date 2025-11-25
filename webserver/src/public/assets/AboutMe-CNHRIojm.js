@@ -1,4 +1,4 @@
-import{c as o,u as l,a as r,j as e,S as d}from"./index-BqfF2MFw.js";import{I as t,a}from"./InfoBlock-BSFsGexk.js";import{U as u}from"./user-DcrN8dRf.js";/**
+import{c as o,u as l,a as r,j as e,S as d}from "./index-BqfF2MFw.js";import{I as t,a}from "./InfoBlock-BSFsGexk.js";import{U as u}from "./user-DcrN8dRf.js";/**
  * @license lucide-react v0.546.0 - ISC
  *
  * This source code is licensed under the ISC license.
