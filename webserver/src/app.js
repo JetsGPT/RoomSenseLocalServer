@@ -112,6 +112,10 @@ app.use(cors({
     credentials: true,
     optionsSuccessStatus: 200
 }));
+
+
+
+app.use(express.static(STATIC_BUILD_FOLDER));
 // session
 // app.set('trust proxy', 1);
 app.use(
@@ -135,7 +139,6 @@ app.use(
 );
 
 // Serve static files (React app) - Place this before rate limiter/auth so assets load freely
-app.use(express.static(STATIC_BUILD_FOLDER));
 
 // Apply DB-backed permissions and rate limiting ONLY to API routes
 app.use('/api', ratePermissions());
