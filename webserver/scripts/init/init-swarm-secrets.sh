@@ -47,7 +47,7 @@ init_swarm() {
     fi
     
     log_info "Initializing Docker Swarm..."
-    if docker swarm init --advertise-addr 127.0.0.1 >/dev/null 2>&1; then
+    if docker swarm init --advertise-addr 127.0.0.1; then
         log_info "Docker Swarm initialized successfully"
     else
         log_error "Failed to initialize Docker Swarm"
@@ -75,7 +75,7 @@ create_secret() {
     # Use printf instead of echo -n for better portability and reliability
     # printf doesn't add any trailing newline, ensuring clean secret creation
     # Always generate secrets programmatically - never copy/paste
-    if printf '%s' "${secret_value}" | docker secret create "${secret_name}" - >/dev/null 2>&1; then
+    if printf '%s' "${secret_value}" | docker secret create "${secret_name}" - ; then
         log_info "Secret '${secret_name}' created successfully"
     else
         log_error "Failed to create secret '${secret_name}'"
@@ -141,7 +141,7 @@ main() {
     fi
     
     # Check if we can access Docker daemon
-    if ! docker info >/dev/null 2>&1; then
+    if ! docker info >/dev/null; then
         log_error "Cannot access Docker daemon"
         exit 1
     fi
