@@ -200,9 +200,11 @@ services:
     restart: always
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - /var/run/docker.sock:/tmp/docker.sock:ro # Vital: Lets it "see" other containers
       - ./nginx/cors_settings:/etc/nginx/vhost.d/roomsense.local_location:ro
+      - ./certs:/etc/nginx/certs:ro
     networks:
       - roomsense-network
 
