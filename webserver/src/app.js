@@ -90,6 +90,7 @@ app.use(cors({
             'capacitor://localhost',
             'ionic://localhost',
             'https://localhost',
+            'https://roomsense.local',
         ];
         
         const isAllowed = allowedOrigins.some(allowedOrigin => {
