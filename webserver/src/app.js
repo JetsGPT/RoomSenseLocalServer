@@ -8,7 +8,7 @@ import fs from 'fs';
 import ratePermissions from './middleware/ratePermissions.js';
 import { loadEnvironment } from './loadSecrets.js';
 import path from 'path';
-import {fileURLToPath} from 'url';
+import { fileURLToPath } from 'url';
 
 // Load environment variables from .env file and Docker Swarm secrets
 loadEnvironment();
@@ -55,7 +55,7 @@ const pool = new Pool({
 
 
 const app = express();
-const PORT = 8081   ;
+const PORT = 8081;
 
 import userRouter from './routes/users.js';
 import sensorRouter from './routes/sensors/index.js';
@@ -73,7 +73,7 @@ app.use(cors({
     origin: function (origin, callback) {
         // Allow requests with no origin (like mobile apps or curl requests)
         if (!origin) return callback(null, true);
-        
+
         // Allow localhost, local network IPs, and your domain
         const allowedOrigins = [
             'http://localhost:5173',
@@ -92,7 +92,7 @@ app.use(cors({
             'https://localhost',
             'https://roomsense.local',
         ];
-        
+
         const isAllowed = allowedOrigins.some(allowedOrigin => {
             if (typeof allowedOrigin === 'string') {
                 return origin === allowedOrigin;
@@ -101,7 +101,7 @@ app.use(cors({
             }
             return false;
         });
-        
+
         if (isAllowed) {
             callback(null, true);
         } else {
@@ -118,14 +118,14 @@ app.use(
     session({
         store: new PgSession({
             pool,
-            tableName: "session",createTableIfMissing: true, // wenn sie nicht existiert wird sie automatisch erstellt
-            pruneSessionInterval: 60*60
+            tableName: "session", createTableIfMissing: true, // wenn sie nicht existiert wird sie automatisch erstellt
+            pruneSessionInterval: 60 * 60
         }),
         secret: process.env.SESSION_SECRET,
         resave: false,
         saveUninitialized: false,
         cookie: {
-            maxAge: 1000 * 60 * 60 * 2, 
+            maxAge: 1000 * 60 * 60 * 2,
             secure: true,
             httpOnly: true,
             sameSite: "none",  // Required for cross-origin requests
@@ -134,8 +134,11 @@ app.use(
     })
 );
 
-// Apply DB-backed permissions and rate limiting
-app.use(ratePermissions());
+// Serve static files (React app) - Place this before rate limiter/auth so assets load freely
+app.use(express.static(STATIC_BUILD_FOLDER));
+
+// Apply DB-backed permissions and rate limiting ONLY to API routes
+app.use('/api', ratePermissions());
 
 
 
@@ -148,7 +151,6 @@ app.use('/api/sensors', sensorRouter);
 app.use('/api/devices', deviceRouter);
 app.use('/testing', testingRouter);
 
-app.use(express.static(STATIC_BUILD_FOLDER));
 
 app.get('*', (req, res) => {
     res.sendFile(path.join(STATIC_BUILD_FOLDER, 'index.html'));
@@ -174,7 +176,7 @@ try {
 https.createServer(httpsOptions, app).listen(PORT, '0.0.0.0', async () => {
     console.log(`✅ HTTPS Server running on https://0.0.0.0:${PORT}`);
     console.log(`🌐 Access from local network: https://[RASPBERRY_PI_IP]:${PORT}`);
-    
+
     // Restore persisted BLE connections after server starts
     // Wait a bit for the BLE gateway to be ready
     setTimeout(async () => {
@@ -186,9 +188,9 @@ https.createServer(httpsOptions, app).listen(PORT, '0.0.0.0', async () => {
 
 // --- HTTP → HTTPS redirect ---
 //http.createServer((req, res) => {
- //   const host = req.headers['host']?.replace(/:\d+$/, ''); // remove port if present
+//   const host = req.headers['host']?.replace(/:\d+$/, ''); // remove port if present
 //    res.writeHead(301, { "Location": "https://" + host + req.url });
-  //  res.end();
+//  res.end();
 //}).listen(80, () => {
-   // console.log('ℹ️ HTTP Server redirecting to HTTPS on port 80');
+// console.log('ℹ️ HTTP Server redirecting to HTTPS on port 80');
 //});
