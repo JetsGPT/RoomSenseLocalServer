@@ -54,9 +54,9 @@ services:
       TRUST_PROXY: ${TRUST_PROXY:-0}
       RATE_LIMIT_TRUST_PROXY: ${RATE_LIMIT_TRUST_PROXY:-0}
       PERM_CACHE_MS: ${PERM_CACHE_MS:-30000}
-      VIRTUAL_HOST: ${VIRTUAL_HOST:-RoomSense.local}
-      VIRTUAL_PORT: ${VIRTUAL_PORT:-8081}
-      VIRTUAL_PROTO: https
+      VIRTUAL_HOST: roomsense.local
+      VIRTUAL_PORT: 8081
+      VIRTUAL_PROTO: http
     # Note: links and depends_on not needed in Swarm mode, services are discoverable by name
     ports:
       - "8081:8081"  # HTTPS port for local network access
