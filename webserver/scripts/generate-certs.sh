@@ -3,7 +3,7 @@ set -e
 
 # 1. Reliable Path Resolution
 # Get the directory where this script is physically located
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Set CERT_DIR to be a sibling of the script directory
 # (e.g. if script is in /scripts, this becomes /certs)
@@ -20,7 +20,8 @@ echo "📂 Cert output dir: ${CERT_DIR}"
 mkdir -p "${CERT_DIR}"
 
 # 3. Check for existing certs (FIXED)
-if &&; then
+# We check if the Key file AND (&&) the Cert file exist (-f)
+if [[ -f "${KEY_FILE}" && -f "${CERT_FILE}" ]]; then
     echo "✅ Certificates already exist in ${CERT_DIR}"
     echo "   Skipping generation to prevent overwrite."
     echo "   (Delete these files manually if you want to regenerate)"
@@ -61,6 +62,8 @@ openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 \
 rm "${OPENSSL_CNF}"
 
 # Set permissions
+# 644 for Cert (Readable by public)
+# 600 for Key (Read/Write by owner only)
 chmod 644 "${CERT_FILE}"
 chmod 600 "${KEY_FILE}"
 
