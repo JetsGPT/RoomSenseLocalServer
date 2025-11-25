@@ -7,12 +7,17 @@ import https from 'https';
 import fs from 'fs';
 import ratePermissions from './middleware/ratePermissions.js';
 import { loadEnvironment } from './loadSecrets.js';
+import path from 'path';
+import {fileURLToPath} from 'url';
 
 // Load environment variables from .env file and Docker Swarm secrets
 loadEnvironment();
 
 
 // Session sachen
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const STATIC_BUILD_FOLDER = path.join(__dirname, 'public');
 
 const { Pool } = pg;
 const PgSession = connectPgSimple(session);
@@ -142,6 +147,11 @@ app.use('/api/sensors', sensorRouter);
 app.use('/api/devices', deviceRouter);
 app.use('/testing', testingRouter);
 
+app.use(express.static(STATIC_BUILD_FOLDER));
+
+app.get('*', (req, res) => {
+    res.sendFile(path.join(STATIC_BUILD_FOLDER, 'index.html'));
+});
 
 
 // SSL certificate configuration
