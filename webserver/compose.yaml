@@ -56,7 +56,7 @@ services:
       PERM_CACHE_MS: ${PERM_CACHE_MS:-30000}
       VIRTUAL_HOST: roomsense.local
       VIRTUAL_PORT: 8081
-      VIRTUAL_PROTO: http
+      VIRTUAL_PROTO: https
     # Note: links and depends_on not needed in Swarm mode, services are discoverable by name
     ports:
       - "8081:8081"  # HTTPS port for local network access
@@ -196,15 +196,14 @@ services:
   # Nginx Proxy
   nginx-proxy:
     image: nginxproxy/nginx-proxy
-    container_name: nginx-proxy
     restart: always
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - /var/run/docker.sock:/tmp/docker.sock:ro # Vital: Lets it "see" other containers
-      - ./nginx/cors_settings:/etc/nginx/vhost.d/roomsense.local_location:ro
-      - ./certs:/etc/nginx/certs:ro
+      - ./vhost.d:/etc/nginx/vhost.d:ro
+      - ./certs:/etc/vhost.d/certs:ro
     networks:
       - roomsense-network
 
