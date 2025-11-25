@@ -47,9 +47,9 @@ services:
       INFLUX_ORG: ${INFLUX_ORG:-RoomSense}
       INFLUX_BUCKET: ${INFLUX_BUCKET:-sensors_data}
       INFLUX_USERNAME: ${INFLUX_USERNAME:-admin}
-      MQTT_BROKER: ${MQTT_BROKER:-localhost}
+      MQTT_BROKER: ${MQTT_BROKER:-mosquitto}
       MQTT_PORT: ${MQTT_PORT:-1883}
-      BLE_GATEWAY_URL: ${BLE_GATEWAY_URL:-http://host.docker.internal:8080}
+      BLE_GATEWAY_URL: ${BLE_GATEWAY_URL:-http://blegateway:8080}
       DEV_BYPASS_AUTH: ${DEV_BYPASS_AUTH:-0}
       TRUST_PROXY: ${TRUST_PROXY:-0}
       RATE_LIMIT_TRUST_PROXY: ${RATE_LIMIT_TRUST_PROXY:-0}
