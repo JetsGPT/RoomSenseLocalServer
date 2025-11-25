@@ -1,38 +1,33 @@
 #!/bin/bash
-# Generate SSL certificates for roomsense.local
-# Saves files to /certs regardless of where the script is run
-
 set -e
 
-# 1. Set explicit absolute path
-CERT_DIR="/certs"
+# 1. Reliable Path Resolution
+# Get the directory where this script is physically located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE}")" && pwd)"
 
-KEY_FILE="${CERT_DIR}/server.key"
-CERT_FILE="${CERT_DIR}/server.cert"
-# These are the files nginx-proxy looks for (VIRTUAL_HOST match)
-HOST_CERT_FILE="${CERT_DIR}/roomsense.local.crt"
-HOST_KEY_FILE="${CERT_DIR}/roomsense.local.key"
+# Set CERT_DIR to be a sibling of the script directory
+# (e.g. if script is in /scripts, this becomes /certs)
+CERT_DIR="$(realpath "${SCRIPT_DIR}/../certs")"
+
+KEY_FILE="${CERT_DIR}/roomsense.local.key"
+CERT_FILE="${CERT_DIR}/roomsense.local.crt"
 OPENSSL_CNF="${CERT_DIR}/openssl_roomsense.cnf"
 
-# 2. Create the directory if it doesn't exist
-# (Requires sudo if /certs is at the root of the filesystem)
+echo "📍 Script location: ${SCRIPT_DIR}"
+echo "📂 Cert output dir: ${CERT_DIR}"
+
+# 2. Create directory if missing
 mkdir -p "${CERT_DIR}"
 
-echo "Working directory is set to: ${CERT_DIR}"
-
-# Check if certificates already exist
+# 3. Check for existing certs (FIXED)
 if &&; then
-    echo "Certificates already exist in ${CERT_DIR}"
-    read -p "Do you want to regenerate them? (y/N): " -n 1 -r
-    echo
-    if$ ]]; then
-        echo "Keeping existing certificates."
-        exit 0
-    fi
-    echo "Regenerating certificates..."
+    echo "✅ Certificates already exist in ${CERT_DIR}"
+    echo "   Skipping generation to prevent overwrite."
+    echo "   (Delete these files manually if you want to regenerate)"
+    exit 0
 fi
 
-# Create an OpenSSL config with Subject Alternative Names
+# 4. Generate Configuration
 cat > "${OPENSSL_CNF}" <<EOF
 [ req ]
 default_bits       = 4096
@@ -43,8 +38,6 @@ prompt             = no
 
 [ dn ]
 C  = US
-ST = State
-L  = City
 O  = RoomSense
 CN = roomsense.local
 
@@ -56,29 +49,22 @@ DNS.1 = roomsense.local
 DNS.2 = localhost
 EOF
 
-# Generate self-signed certificate with SANs
-echo "Generating self-signed SSL certificate..."
-openssl req -x509 -newkey rsa:4096 \
+# 5. Generate Certificates (One Step)
+echo "🔑 Generating self-signed certificate..."
+openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 \
+    -nodes \
     -keyout "${KEY_FILE}" \
     -out "${CERT_FILE}" \
-    -days 3650 \
-    -nodes \
     -config "${OPENSSL_CNF}"
 
-# Copy to the specific filenames nginx-proxy expects
-# We use 'cp' to ensure we have the copies named correctly for the VIRTUAL_HOST
-cp "${CERT_FILE}" "${HOST_CERT_FILE}"
-cp "${KEY_FILE}" "${HOST_KEY_FILE}"
-
-# Set permissions (Read/Write for owner, Read for group/others)
-chmod 644 "${CERT_FILE}" "${HOST_CERT_FILE}"
-chmod 600 "${KEY_FILE}" "${HOST_KEY_FILE}"
-
-# Cleanup temp config
+# Cleanup config
 rm "${OPENSSL_CNF}"
 
+# Set permissions
+chmod 644 "${CERT_FILE}"
+chmod 600 "${KEY_FILE}"
+
 echo ""
-echo "✅ Success!"
-echo "   Certificates stored in: ${CERT_DIR}"
-echo "   Nginx-Proxy File:       ${HOST_CERT_FILE}"
-echo ""
+echo "✅ Success! Certificates generated:"
+echo "   ${CERT_FILE}"
+echo "   ${KEY_FILE}"
