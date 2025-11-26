@@ -9,9 +9,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # (e.g. if script is in /scripts, this becomes /certs)
 CERT_DIR="$(realpath "${SCRIPT_DIR}/../certs")"
 
-KEY_FILE="${CERT_DIR}/roomsense.local.key"
-CERT_FILE="${CERT_DIR}/roomsense.local.crt"
-OPENSSL_CNF="${CERT_DIR}/openssl_roomsense.cnf"
+KEY_FILE="${CERT_DIR}/server.key"
+CERT_FILE="${CERT_DIR}/server.crt"
+OPENSSL_CNF="${CERT_DIR}/server.cnf"
 
 echo "📍 Script location: ${SCRIPT_DIR}"
 echo "📂 Cert output dir: ${CERT_DIR}"
