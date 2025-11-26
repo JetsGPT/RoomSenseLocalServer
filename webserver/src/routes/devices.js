@@ -135,15 +135,16 @@ router.get('/scan', authMiddleware, async (req, res) => {
                 const dbResult = await pool.query('SELECT address, name, display_name FROM ble_connections');
                 const knownDevices = new Map();
                 dbResult.rows.forEach(row => {
-                    knownDevices.set(row.address, row);
+                    knownDevices.set(row.address.toUpperCase(), row);
                 });
                 // 3. Overlay known names onto scan results
                 // scanResults is expected to be an array of { address, name }
                 if (Array.isArray(scanResults)) {
                     scanResults.forEach(device => {
-                        if (knownDevices.has(device.address)) {
+                        const upperAddress = device.address.toUpperCase();
+                        if (knownDevices.has(upperAddress)) {
                             // Use display_name if available, otherwise keep technical name
-                            const known = knownDevices.get(device.address);
+                            const known = knownDevices.get(upperAddress);
                             if (known.display_name) {
                                 device.name = known.display_name;
                                 device.original_name = known.name; // Keep track of technical ID
@@ -206,11 +207,12 @@ router.get('/connections', authMiddleware, async (req, res) => {
             try {
                 const dbResult = await pool.query('SELECT address, name, display_name FROM ble_connections');
                 const knownDevices = new Map();
-                dbResult.rows.forEach(row => knownDevices.set(row.address, row));
+                dbResult.rows.forEach(row => knownDevices.set(row.address.toUpperCase(), row));
 
                 connections.forEach(conn => {
-                    if (knownDevices.has(conn.address)) {
-                        const known = knownDevices.get(conn.address);
+                    const upperAddress = conn.address.toUpperCase();
+                    if (knownDevices.has(upperAddress)) {
+                        const known = knownDevices.get(upperAddress);
                         conn.original_name = known.name; // Technical ID
                         if (known.display_name) {
                             conn.name = known.display_name; // Display alias
