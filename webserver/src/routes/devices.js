@@ -229,6 +229,8 @@ router.get('/connections', authMiddleware, async (req, res) => {
                     }
                 });
 
+                const updates = [];
+
                 connections.forEach(conn => {
                     if (!conn.address) return;
 
@@ -244,6 +246,18 @@ router.get('/connections', authMiddleware, async (req, res) => {
                     if (knownDevices.has(upperAddress)) {
                         const known = knownDevices.get(upperAddress);
 
+                        // Sync DB name with box_name if different (and box_name exists)
+                        // This ensures InfluxDB queries (which use box_name) work with the alias resolution
+                        if (conn.box_name && known.name !== conn.box_name) {
+                            console.log(`[BLE] Updating technical name for ${conn.address} from '${known.name}' to '${conn.box_name}'`);
+                            updates.push(pool.query(
+                                'UPDATE ble_connections SET name = $1, updated_at = NOW() WHERE UPPER(address) = $2',
+                                [conn.box_name, upperAddress]
+                            ));
+                            // Update local known object for this response
+                            known.name = conn.box_name;
+                        }
+
                         // original_name: Technical ID (DB > Gateway Box Name > Advertised Name)
                         if (known.name) {
                             conn.original_name = known.name;
@@ -255,13 +269,24 @@ router.get('/connections', authMiddleware, async (req, res) => {
                         } else if (known.name) {
                             conn.name = known.name;
                         } else if (conn.box_name) {
-                            conn.name = conn.box_name; // Fallback to box name if no custom name
+                            conn.name = conn.box_name;
                         }
                     } else if (conn.box_name) {
                         // If not in DB but has box_name, use it as display name too
                         conn.name = conn.box_name;
                     }
                 });
+
+                // Execute updates in background (don't block response too long, but good to await for error handling)
+                if (updates.length > 0) {
+                    Promise.allSettled(updates).then(results => {
+                        results.forEach((res, idx) => {
+                            if (res.status === 'rejected') {
+                                console.error(`[BLE] Failed to update name for device:`, res.reason);
+                            }
+                        });
+                    });
+                }
             } catch (dbError) {
                 console.error('[BLE] Failed to fetch known devices for connections:', dbError);
             }
