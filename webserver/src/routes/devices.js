@@ -132,27 +132,13 @@ router.get('/scan', authMiddleware, async (req, res) => {
         // 2. Fetch known names from the database
         if (pool) {
             try {
-                const dbResult = await pool.query('SELECT address, name FROM ble_connections');
+                const dbResult = await pool.query('SELECT address, name, display_name FROM ble_connections');
                 const knownDevices = new Map();
                 dbResult.rows.forEach(row => {
-                    if (row.name) knownDevices.set(row.address, row.name);
+                    knownDevices.set(row.address, row);
                 });
                 // 3. Overlay known names onto scan results
                 // scanResults is expected to be an array of { address, name }
-                if (Array.isArray(scanResults)) {
-                    scanResults.forEach(device => {
-                        if (knownDevices.has(device.address)) {
-                            // Use display_name if available, otherwise keep technical name
-                            const known = knownDevices.get(device.address);
-                            if (known.display_name) {
-                                device.name = known.display_name;
-                                device.original_name = known.name; // Keep track of technical ID
-                            } else if (known.name) {
-                                device.name = known.name;
-                            }
-                        }
-                    });
-                }
                 if (Array.isArray(scanResults)) {
                     scanResults.forEach(device => {
                         if (knownDevices.has(device.address)) {
