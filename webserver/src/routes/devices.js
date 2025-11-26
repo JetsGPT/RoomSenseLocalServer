@@ -135,19 +135,35 @@ router.get('/scan', authMiddleware, async (req, res) => {
                 const dbResult = await pool.query('SELECT address, name, display_name FROM ble_connections');
                 const knownDevices = new Map();
                 dbResult.rows.forEach(row => {
-                    knownDevices.set(row.address.toUpperCase(), row);
+                    // Store by uppercase address for case-insensitive matching
+                    if (row.address) {
+                        knownDevices.set(row.address.toUpperCase(), row);
+                    }
                 });
+
                 // 3. Overlay known names onto scan results
-                // scanResults is expected to be an array of { address, name }
                 if (Array.isArray(scanResults)) {
                     scanResults.forEach(device => {
+                        if (!device.address) return;
+
                         const upperAddress = device.address.toUpperCase();
+
+                        // Default original_name to the advertised name if not already set
+                        if (!device.original_name) {
+                            device.original_name = device.name;
+                        }
+
                         if (knownDevices.has(upperAddress)) {
-                            // Use display_name if available, otherwise keep technical name
                             const known = knownDevices.get(upperAddress);
+
+                            // original_name: Immutable technical name (from DB or keep existing)
+                            if (known.name) {
+                                device.original_name = known.name;
+                            }
+
+                            // name: User-friendly alias (display_name) -> Technical Name (name) -> Advertised Name
                             if (known.display_name) {
                                 device.name = known.display_name;
-                                device.original_name = known.name; // Keep track of technical ID
                             } else if (known.name) {
                                 device.name = known.name;
                             }
@@ -207,15 +223,33 @@ router.get('/connections', authMiddleware, async (req, res) => {
             try {
                 const dbResult = await pool.query('SELECT address, name, display_name FROM ble_connections');
                 const knownDevices = new Map();
-                dbResult.rows.forEach(row => knownDevices.set(row.address.toUpperCase(), row));
+                dbResult.rows.forEach(row => {
+                    if (row.address) {
+                        knownDevices.set(row.address.toUpperCase(), row);
+                    }
+                });
 
                 connections.forEach(conn => {
+                    if (!conn.address) return;
+
                     const upperAddress = conn.address.toUpperCase();
+
+                    // Default original_name
+                    if (!conn.original_name) {
+                        conn.original_name = conn.name;
+                    }
+
                     if (knownDevices.has(upperAddress)) {
                         const known = knownDevices.get(upperAddress);
-                        conn.original_name = known.name; // Technical ID
+
+                        // original_name: Technical ID
+                        if (known.name) {
+                            conn.original_name = known.name;
+                        }
+
+                        // name: Display alias -> Technical ID
                         if (known.display_name) {
-                            conn.name = known.display_name; // Display alias
+                            conn.name = known.display_name;
                         } else if (known.name) {
                             conn.name = known.name;
                         }
