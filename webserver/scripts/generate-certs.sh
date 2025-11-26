@@ -1,54 +1,73 @@
 #!/bin/bash
-# Generate SSL certificates for the webserver
-# This creates self-signed certificates for HTTPS
-
 set -e
 
-CERT_DIR="certs"
-KEY_FILE="${CERT_DIR}/server.key"
-CERT_FILE="${CERT_DIR}/server.cert"
-
-# Get script directory and project root
+# 1. Reliable Path Resolution
+# Get the directory where this script is physically located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-cd "${PROJECT_ROOT}"
 
-# Create certs directory if it doesn't exist
+# Set CERT_DIR to be a sibling of the script directory
+# (e.g. if script is in /scripts, this becomes /certs)
+CERT_DIR="$(realpath "${SCRIPT_DIR}/../certs")"
+
+KEY_FILE="${CERT_DIR}/server.key"
+CERT_FILE="${CERT_DIR}/server.crt"
+OPENSSL_CNF="${CERT_DIR}/server.cnf"
+
+echo "📍 Script location: ${SCRIPT_DIR}"
+echo "📂 Cert output dir: ${CERT_DIR}"
+
+# 2. Create directory if missing
 mkdir -p "${CERT_DIR}"
 
-# Check if certificates already exist
-if [ -f "${KEY_FILE}" ] && [ -f "${CERT_FILE}" ]; then
-    echo "Certificates already exist at:"
-    echo "  - ${KEY_FILE}"
-    echo "  - ${CERT_FILE}"
-    echo ""
-    read -p "Do you want to regenerate them? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Keeping existing certificates."
-        exit 0
-    fi
-    echo "Regenerating certificates..."
+# 3. Check for existing certs (FIXED)
+# We check if the Key file AND (&&) the Cert file exist (-f)
+if [[ -f "${KEY_FILE}" && -f "${CERT_FILE}" ]]; then
+    echo "✅ Certificates already exist in ${CERT_DIR}"
+    echo "   Skipping generation to prevent overwrite."
+    echo "   (Delete these files manually if you want to regenerate)"
+    exit 0
 fi
 
-# Generate self-signed certificate
-echo "Generating self-signed SSL certificate..."
-openssl req -x509 -newkey rsa:4096 \
+# 4. Generate Configuration
+cat > "${OPENSSL_CNF}" <<EOF
+[ req ]
+default_bits       = 4096
+distinguished_name = dn
+req_extensions     = req_ext
+x509_extensions    = req_ext
+prompt             = no
+
+[ dn ]
+C  = US
+O  = RoomSense
+CN = roomsense.local
+
+[ req_ext ]
+subjectAltName = @alt_names
+
+[ alt_names ]
+DNS.1 = roomsense.local
+DNS.2 = localhost
+EOF
+
+# 5. Generate Certificates (One Step)
+echo "🔑 Generating self-signed certificate..."
+openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 \
+    -nodes \
     -keyout "${KEY_FILE}" \
     -out "${CERT_FILE}" \
-    -days 365 \
-    -nodes \
-    -subj "/C=US/ST=State/L=City/O=RoomSense/CN=localhost"
+    -config "${OPENSSL_CNF}"
 
-# Set proper permissions
-chmod 600 "${KEY_FILE}"
+# Cleanup config
+rm "${OPENSSL_CNF}"
+
+# Set permissions
+# 644 for Cert (Readable by public)
+# 600 for Key (Read/Write by owner only)
 chmod 644 "${CERT_FILE}"
+chmod 600 "${KEY_FILE}"
 
 echo ""
-echo "✅ SSL certificates generated successfully!"
-echo "   Key:  ${KEY_FILE}"
-echo "   Cert: ${CERT_FILE}"
-echo ""
-echo "⚠️  Note: These are self-signed certificates for development."
-echo "   For production, use certificates from a trusted CA."
-
+echo "✅ Success! Certificates generated:"
+echo "   ${CERT_FILE}"
+echo "   ${KEY_FILE}"
