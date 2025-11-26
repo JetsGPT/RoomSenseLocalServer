@@ -455,7 +455,8 @@ async def get_active_connections():
     return JSONResponse(content=[
         {
             "address": addr,
-            "name": p.name
+            "name": p.name,
+            "box_name": p.box_address  # Added box_address
         }
         for addr, p in active_devices.items()
     ])

@@ -234,15 +234,17 @@ router.get('/connections', authMiddleware, async (req, res) => {
 
                     const upperAddress = conn.address.toUpperCase();
 
-                    // Default original_name
-                    if (!conn.original_name) {
+                    // Default original_name: Use box_name if available (from gateway), else advertised name
+                    if (conn.box_name) {
+                        conn.original_name = conn.box_name;
+                    } else if (!conn.original_name) {
                         conn.original_name = conn.name;
                     }
 
                     if (knownDevices.has(upperAddress)) {
                         const known = knownDevices.get(upperAddress);
 
-                        // original_name: Technical ID
+                        // original_name: Technical ID (DB > Gateway Box Name > Advertised Name)
                         if (known.name) {
                             conn.original_name = known.name;
                         }
@@ -252,7 +254,12 @@ router.get('/connections', authMiddleware, async (req, res) => {
                             conn.name = known.display_name;
                         } else if (known.name) {
                             conn.name = known.name;
+                        } else if (conn.box_name) {
+                            conn.name = conn.box_name; // Fallback to box name if no custom name
                         }
+                    } else if (conn.box_name) {
+                        // If not in DB but has box_name, use it as display name too
+                        conn.name = conn.box_name;
                     }
                 });
             } catch (dbError) {
