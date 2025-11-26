@@ -1,69 +1,98 @@
-# PowerShell script to generate SSL certificates for the webserver
-# This creates self-signed certificates for HTTPS
+<#
+.SYNOPSIS
+    Generates self-signed certificates for RoomSense using OpenSSL.
+    (Copy-Paste Safe Version)
+#>
 
 $ErrorActionPreference = "Stop"
 
-# Get script directory and project root
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ProjectRoot = Split-Path -Parent (Split-Path -Parent $ScriptDir)
-Set-Location $ProjectRoot
+# 1. Reliable Path Resolution
+$ScriptDir = $PSScriptRoot
+$ParentDir = Split-Path -Parent $ScriptDir
+$CertDir = Join-Path -Path $ParentDir -ChildPath "certs"
 
-$CertDir = "certs"
-$KeyFile = Join-Path $CertDir "server.key"
-$CertFile = Join-Path $CertDir "server.cert"
+$KeyFile = Join-Path -Path $CertDir -ChildPath "roomsense.local.key"
+$CertFile = Join-Path -Path $CertDir -ChildPath "roomsense.local.crt"
+$OpenSslCnf = Join-Path -Path $CertDir -ChildPath "openssl_roomsense.cnf"
 
-# Create certs directory if it doesn't exist
-if (-not (Test-Path $CertDir)) {
-    New-Item -ItemType Directory -Path $CertDir | Out-Null
+Write-Host "📍 Script location: $ScriptDir"
+Write-Host "📂 Cert output dir: $CertDir"
+
+# 2. Create directory if missing
+if (-not (Test-Path -Path $CertDir)) {
+    New-Item -ItemType Directory -Path $CertDir -Force | Out-Null
 }
 
-# Check if certificates already exist
-if ((Test-Path $KeyFile) -and (Test-Path $CertFile)) {
-    Write-Host "Certificates already exist at:" -ForegroundColor Yellow
-    Write-Host "  - $KeyFile"
-    Write-Host "  - $CertFile"
-    Write-Host ""
-    $response = Read-Host "Do you want to regenerate them? (y/N)"
-    if ($response -ne "y" -and $response -ne "Y") {
-        Write-Host "Keeping existing certificates." -ForegroundColor Green
-        exit 0
-    }
-    Write-Host "Regenerating certificates..." -ForegroundColor Yellow
+# 3. Check for existing certs
+if ((Test-Path -Path $KeyFile) -and (Test-Path -Path $CertFile)) {
+    Write-Host "✅ Certificates already exist in $CertDir" -ForegroundColor Green
+    Write-Host "   Skipping generation to prevent overwrite."
+    exit 0
 }
 
-# Check if OpenSSL is available
+# Check for OpenSSL
 if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
-    Write-Host "Error: OpenSSL is not installed or not in PATH" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "On Windows, you can:" -ForegroundColor Yellow
-    Write-Host "  1. Install OpenSSL via Git Bash (comes with Git for Windows)"
-    Write-Host "  2. Install OpenSSL via Chocolatey: choco install openssl"
-    Write-Host "  3. Use WSL (Windows Subsystem for Linux)"
-    Write-Host ""
-    Write-Host "Alternatively, generate certificates manually:"
-    Write-Host "  openssl req -x509 -newkey rsa:4096 -keyout certs/server.key -out certs/server.cert -days 365 -nodes" -ForegroundColor Cyan
+    Write-Error "OpenSSL is not found in your PATH."
     exit 1
 }
 
-# Generate self-signed certificate
-Write-Host "Generating self-signed SSL certificate..." -ForegroundColor Cyan
-openssl req -x509 -newkey rsa:4096 `
-    -keyout $KeyFile `
-    -out $CertFile `
-    -days 365 `
-    -nodes `
-    -subj "/C=US/ST=State/L=City/O=RoomSense/CN=localhost"
+# 4. Generate Configuration (Using a List to prevent indentation errors)
+$ConfigLines = @(
+    "[ req ]",
+    "default_bits       = 4096",
+    "distinguished_name = dn",
+    "req_extensions     = req_ext",
+    "x509_extensions    = req_ext",
+    "prompt             = no",
+    "",
+    "[ dn ]",
+    "C  = US",
+    "O  = RoomSense",
+    "CN = roomsense.local",
+    "",
+    "[ req_ext ]",
+    "subjectAltName = @alt_names",
+    "",
+    "[ alt_names ]",
+    "DNS.1 = roomsense.local",
+    "DNS.2 = localhost"
+)
 
-if ($LASTEXITCODE -eq 0) {
-    Write-Host ""
-    Write-Host "✅ SSL certificates generated successfully!" -ForegroundColor Green
-    Write-Host "   Key:  $KeyFile"
-    Write-Host "   Cert: $CertFile"
-    Write-Host ""
-    Write-Host "⚠️  Note: These are self-signed certificates for development." -ForegroundColor Yellow
-    Write-Host "   For production, use certificates from a trusted CA."
-} else {
-    Write-Host "Error: Failed to generate certificates" -ForegroundColor Red
-    exit 1
+# Write config using ASCII to ensure OpenSSL compatibility
+$ConfigLines | Set-Content -Path $OpenSslCnf -Encoding Ascii
+
+# 5. Generate Certificates
+Write-Host "🔑 Generating self-signed certificate..."
+
+# We execute this as a single command line to avoid backtick/whitespace issues
+& openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes -keyout "$KeyFile" -out "$CertFile" -config "$OpenSslCnf"
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "OpenSSL command failed."
+    exit $LASTEXITCODE
 }
 
+# Cleanup config
+Remove-Item -Path $OpenSslCnf -Force
+
+# 6. Set permissions (Windows ACL)
+try {
+    $Acl = Get-Acl -Path $KeyFile
+    $Acl.SetAccessRuleProtection($true, $false)
+    $Rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        [System.Security.Principal.WindowsIdentity]::GetCurrent().Name,
+        "FullControl",
+        "Allow"
+    )
+    $Acl.AddAccessRule($Rule)
+    Set-Acl -Path $KeyFile -AclObject $Acl
+    Write-Host "🔒 Key file permissions restricted to current user." -ForegroundColor Gray
+}
+catch {
+    Write-Warning "Could not restrict file permissions automatically."
+}
+
+Write-Host ""
+Write-Host "✅ Success! Certificates generated:" -ForegroundColor Green
+Write-Host "   $CertFile"
+Write-Host "   $KeyFile"
