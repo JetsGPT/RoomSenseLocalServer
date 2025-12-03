@@ -27,6 +27,11 @@ chown -R mosquitto:mosquitto /mosquitto/data /mosquitto/log
 chmod 0700 /mosquitto/data
 chmod 0700 /mosquitto/log
 
+# Fix persistence file permissions if it exists
+if [ -f /mosquitto/data/mosquitto.db ]; then
+    chmod 0700 /mosquitto/data/mosquitto.db
+fi
+
 # Start mosquitto
 # Mosquitto will automatically drop privileges to 'mosquitto' user if started as root
 exec /usr/sbin/mosquitto -c /mosquitto/config/mosquitto.conf
