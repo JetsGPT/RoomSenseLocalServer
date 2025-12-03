@@ -165,6 +165,7 @@ services:
   # MQTT Broker
   mosquitto:
     image: eclipse-mosquitto:latest
+    user: "0:0" # Run as root to allow entrypoint to fix permissions
     deploy:
       restart_policy:
         condition: any
