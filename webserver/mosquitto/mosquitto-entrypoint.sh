@@ -16,7 +16,7 @@ mosquitto_passwd -b /mosquitto/config/passwd telegraf "$MQTT_PASSWORD"
 mosquitto_passwd -b /mosquitto/config/passwd blegateway "$MQTT_PASSWORD"
 
 # Fix permissions
-chmod 0644 /mosquitto/config/passwd
+chmod 0700 /mosquitto/config/passwd
 
 # Start mosquitto
 exec /usr/sbin/mosquitto -c /mosquitto/config/mosquitto.conf
