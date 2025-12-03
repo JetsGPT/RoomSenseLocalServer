@@ -169,6 +169,15 @@ function Initialize-Secrets {
     } else {
         Write-Info "InfluxDB token already exists"
     }
+
+    # MQTT password - Generate secure password
+    if (-not (Test-SecretExists -SecretName "mqtt_password")) {
+        $mqttPassword = New-SecureSecret -Length 32
+        New-DockerSecret -SecretName "mqtt_password" -SecretValue $mqttPassword
+        Write-Info "Generated new MQTT password (64 hex characters)"
+    } else {
+        Write-Info "MQTT password already exists"
+    }
     
     Write-Info "All secrets initialized successfully!"
 }

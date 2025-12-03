@@ -26,6 +26,28 @@ else
     echo "⚠️  Warning: ${SECRET_FILE} not found, using environment variable if set"
 fi
 
+# Load MQTT password from Docker Swarm secret if it exists
+MQTT_SECRET_FILE="/run/secrets/mqtt_password"
+if [ -f "${MQTT_SECRET_FILE}" ]; then
+    MQTT_PASSWORD=$(tr -d '\r\n' < "${MQTT_SECRET_FILE}")
+    export MQTT_PASSWORD
+    export MQTT_USERNAME="telegraf"
+    echo "✓ Loaded MQTT_PASSWORD from Docker Swarm secret"
+    
+    # Replace ${MQTT_PASSWORD} and ${MQTT_USERNAME} in config file
+    # We use the potentially already modified CONFIG_FILE (TEMP_CONFIG)
+    
+    # Escape special characters in password for sed
+    ESCAPED_PASSWORD=$(echo "${MQTT_PASSWORD}" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    
+    # Create a new temp file or overwrite the existing one
+    NEW_TEMP_CONFIG="/tmp/telegraf_final.conf"
+    sed "s|\${MQTT_PASSWORD}|${ESCAPED_PASSWORD}|g" "${CONFIG_FILE}" | \
+    sed "s|\${MQTT_USERNAME}|${MQTT_USERNAME}|g" > "${NEW_TEMP_CONFIG}"
+    
+    CONFIG_FILE="${NEW_TEMP_CONFIG}"
+fi
+
 # Start telegraf with the configuration
 exec telegraf --config "${CONFIG_FILE}"
 

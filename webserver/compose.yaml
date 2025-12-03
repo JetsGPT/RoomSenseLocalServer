@@ -12,6 +12,8 @@ secrets:
     external: true  # Created by init service
   influx_token:
     external: true  # Created by init service
+  mqtt_password:
+    external: true  # Created by init service
 
 services:
   # Note: Docker Swarm and secrets are initialized by scripts/init/start.sh script
@@ -132,6 +134,7 @@ services:
     # For full host networking, consider deploying blegateway separately
     volumes:
       - ./bletomqtt:/bletomqtt
+      - ./bletomqtt/blegateway-entrypoint.sh:/blegateway-entrypoint.sh:ro
       # D-Bus volumes (Linux only - will fail on Windows but container will still start)
       - /run/dbus:/run/dbus:ro
       - /var/run/dbus:/var/run/dbus:ro
@@ -145,6 +148,9 @@ services:
     # For Raspberry Pi: uncomment network_mode below and comment out ports
     # ports:
     #   - "8080:8080"
+    secrets:
+      - mqtt_password
+    entrypoint: ["/bin/sh", "/blegateway-entrypoint.sh", "python", "main.py"]
     # Note: depends_on, devices, and cap_add have limitations in Swarm mode
     deploy:
       restart_policy:
@@ -170,7 +176,11 @@ services:
       - ./mosquitto/config:/mosquitto/config
       - ./mosquitto/data:/mosquitto/data
       - ./mosquitto/log:/mosquitto/log
-    command: mosquitto -c /mosquitto/config/mosquitto.conf
+      - ./mosquitto/mosquitto-entrypoint.sh:/mosquitto-entrypoint.sh:ro
+    secrets:
+      - mqtt_password
+    entrypoint: ["/bin/sh", "/mosquitto-entrypoint.sh"]
+    # command: mosquitto -c /mosquitto/config/mosquitto.conf # Handled by entrypoint
     networks:
       - roomsense-network
 
@@ -184,6 +194,7 @@ services:
     # Only grant access to InfluxDB token (for writing metrics)
     secrets:
       - influx_token
+      - mqtt_password
     volumes:
       - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
       - ./scripts/entrypoints/telegraf-entrypoint.sh:/telegraf-entrypoint.sh:ro
