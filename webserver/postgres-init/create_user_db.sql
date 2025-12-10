@@ -118,7 +118,8 @@ ON CONFLICT (role, method, path_pattern, match_type) DO NOTHING;
 INSERT INTO public.permissions(role, method, path_pattern, match_type, allow, rate_limit_max, rate_limit_window_ms)
 VALUES
 ('user','GET','/api/sensors','prefix', true, 120, 60000),
-('user','POST','/api/sensors','prefix', true, 30, 60000)
+('user','POST','/api/sensors','prefix', true, 30, 60000),
+('user','GET','/api/devices','prefix', true, 30, 60000)
 ON CONFLICT (role, method, path_pattern, match_type) DO NOTHING;
 
 -- User: allow own profile/me endpoints
