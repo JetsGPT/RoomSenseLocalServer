@@ -9,7 +9,7 @@ import fs from 'fs';
 const { Client } = pg
 
 // Read password directly from Docker secret file to ensure exact match with postgres
-let dbPassword = process.env.PGPASSWORD || 'password';
+let dbPassword = process.env.PGPASSWORD;
 try {
     const secretPath = '/run/secrets/pgpassword';
     if (fs.existsSync(secretPath)) {
@@ -52,7 +52,7 @@ async function createUser(username, password) {
         await pgClient.query('COMMIT');
         return result.rows?.[0] ?? null;
     } catch (error) {
-        try { await pgClient.query('ROLLBACK'); } catch(e) {}
+        try { await pgClient.query('ROLLBACK'); } catch (e) { }
         console.error('Error creating user:', error);
         throw error;
     } finally {
@@ -164,7 +164,7 @@ router.delete('/roles/:role', requireLogin, requireRole('admin'), async (req, re
         await pgClient.query('COMMIT');
         res.status(200).send({ deleted: role, reassignedTo: reassignTo || null });
     } catch (error) {
-        try { await pgClient.query('ROLLBACK'); } catch(e) {}
+        try { await pgClient.query('ROLLBACK'); } catch (e) { }
         console.error('Error deleting role:', error);
         res.status(500).send({ error: 'Failed to delete role' });
     } finally {
@@ -194,7 +194,7 @@ router.get('/roles/:role/permissions', requireLogin, requireRole('admin'), async
 });
 
 router.post('/register', async (req, res) => {
-    let {user, password} = req.body;
+    let { user, password } = req.body;
     createUser(user, password).then(result => {
         console.log('Created user: ', result);
         res.status(200).send(result)
@@ -223,7 +223,7 @@ router.post('/login', async (req, res) => {
             username: authUser.username,
             role: authUser.role,
         };
-        
+
         // Explicitly save the session
         req.session.save((err) => {
             if (err) {
@@ -249,7 +249,7 @@ router.put('/roles/:role/permissions', requireLogin, requireRole('admin'), async
 
     // Basic validation
     const allowedMatchTypes = new Set(['prefix', 'exact']);
-    const allowedMethods = new Set(['*','GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS']);
+    const allowedMethods = new Set(['*', 'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
     const cleaned = [];
     for (const p of payload.permissions) {
         const method = String(p.method || '*').toUpperCase();
@@ -299,7 +299,7 @@ router.put('/roles/:role/permissions', requireLogin, requireRole('admin'), async
         );
         res.status(200).send({ role, permissions: rows });
     } catch (error) {
-        try { await pgClient.query('ROLLBACK'); } catch(e) {}
+        try { await pgClient.query('ROLLBACK'); } catch (e) { }
         console.error('Error updating permissions:', error);
         res.status(500).send({ error: 'Failed to update permissions' });
     } finally {
@@ -309,11 +309,11 @@ router.put('/roles/:role/permissions', requireLogin, requireRole('admin'), async
 
 router.post('/logout', (req, res) => {
     req.session.destroy(err => {
-      if (err) return res.status(500).send({ error: 'Logout failed' });
-      res.clearCookie('connect.sid'); 
-      res.status(200).send({ message: 'Logged out' });
+        if (err) return res.status(500).send({ error: 'Logout failed' });
+        res.clearCookie('connect.sid');
+        res.status(200).send({ message: 'Logged out' });
     });
-  });
+});
 
 router.get('/me', requireLogin, async (req, res) => {
     try {
@@ -355,7 +355,7 @@ router.put('/:id/role', requireLogin, requireRole('admin'), async (req, res) => 
         if (result.rows.length === 0) return res.status(404).send({ error: 'User not found' });
         res.status(200).send(result.rows[0]);
     } catch (error) {
-        try { await pgClient.query('ROLLBACK'); } catch(e) {}
+        try { await pgClient.query('ROLLBACK'); } catch (e) { }
         console.error('Error updating user role:', error);
         res.status(500).send({ error: 'Failed to update user role' });
     } finally {

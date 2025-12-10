@@ -126,6 +126,15 @@ init_secrets() {
     else
         log_info "InfluxDB token already exists"
     fi
+
+    # Web App DB Password - Low privilege user
+    if ! secret_exists "webapp_password"; then
+        WEBAPP_PASSWORD=$(generate_secure_secret 32)
+        create_secret "webapp_password" "${WEBAPP_PASSWORD}"
+        log_info "Generated new WebApp DB password (64 hex characters)"
+    else
+        log_info "WebApp DB password already exists"
+    fi
     
     log_info "All secrets initialized successfully!"
 }

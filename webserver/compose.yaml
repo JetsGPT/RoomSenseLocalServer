@@ -14,6 +14,8 @@ secrets:
     external: true  # Created by init service
   mqtt_password:
     external: true  # Created by init service
+  webapp_password:
+    external: true  # Created by init service
 
 services:
   # Note: Docker Swarm and secrets are initialized by scripts/init/start.sh script
@@ -36,13 +38,14 @@ services:
     # Only grant access to secrets this service needs
     secrets:
       - session_secret
-      - pgpassword
+      - source: webapp_password
+        target: pgpassword
       - influx_password
       - influx_token
     environment:
       # Non-sensitive defaults (can be overridden by .env file)
       PGHOST: ${PGHOST:-postgres}
-      PGUSER: ${PGUSER:-postgres}
+      PGUSER: web_app
       PGPORT: ${PGPORT:-5432}
       PGDATABASE: ${PGDATABASE:-user}
       INFLUX_URL: ${INFLUX_URL:-https://influxdb:8086}
@@ -78,6 +81,7 @@ services:
     # Only grant access to PostgreSQL password secret
     secrets:
       - pgpassword
+      - webapp_password
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./postgres-init:/docker-entrypoint-initdb.d

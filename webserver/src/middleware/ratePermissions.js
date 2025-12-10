@@ -94,7 +94,7 @@ async function ensurePermissionsSchema(pool) {
 
       await client.query('COMMIT');
     } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
+      await client.query('ROLLBACK').catch(() => { });
       throw err;
     } finally {
       client.release();
@@ -154,19 +154,7 @@ function enforceCounter(key, limit, windowMs) {
 export default function ratePermissions() {
   return async function (req, res, next) {
     try {
-      // Dev mode bypass - skip rate limiting and permissions in dev
-      const devBypassValue = process.env.DEV_BYPASS_AUTH;
-      const devBypass = devBypassValue === '1' || devBypassValue === 'true' || devBypassValue === 1;
-      
-      if (devBypass) {
-        console.log('[DEV MODE] Bypassing rate limiter for:', req.method, req.path);
-        return next();
-      }
-      
-      // Debug: log if env var is set but not matching
-      if (devBypassValue !== undefined && !devBypass) {
-        console.log('[DEBUG] DEV_BYPASS_AUTH is set but not matching:', devBypassValue, typeof devBypassValue);
-      }
+      // Enforce rate limits and permissions (no bypass)
 
       if (trustProxy) req.app.set('trust proxy', 1);
       const pool = req.app?.locals?.pool;

@@ -65,7 +65,7 @@ export function loadEnvironment() {
                 secretsLoaded++;
                 console.log(`✓ Loaded ${envVar} from Docker secret`);
             } else {
-                console.warn(`⚠️  ${envVar} not found in secrets and not in .env`);
+                throw new Error(`CRITICAL: ${envVar} not found in secrets (Docker Swarm) and not set in environment (.env). Secret file: ${secretName}`);
             }
         } else {
             console.log(`ℹ️  ${envVar} already set (from .env or environment)`);

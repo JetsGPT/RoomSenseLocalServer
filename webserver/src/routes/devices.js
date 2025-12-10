@@ -8,10 +8,8 @@ const { Pool } = pg;
 // Database connection pool (will be injected from app.js)
 let pool = null;
 
-// Dev mode: bypass auth if DEV_BYPASS_AUTH is set
-const authMiddleware = process.env.DEV_BYPASS_AUTH === '1'
-    ? (req, res, next) => next()  // Skip auth in dev mode
-    : requireLogin;  // Require auth in production
+// Enforce authentication
+const authMiddleware = requireLogin;
 
 // BLE Gateway API endpoint
 const BLE_GATEWAY_URL = process.env.BLE_GATEWAY_URL || 'http://blegateway:8080';

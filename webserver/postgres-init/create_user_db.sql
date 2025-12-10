@@ -166,3 +166,29 @@ CREATE TRIGGER trg_update_ble_connections_updated_at
 BEFORE UPDATE ON public.ble_connections
 FOR EACH ROW
 EXECUTE FUNCTION update_ble_connections_updated_at();
+
+-- ----------------------------
+-- Session Table (connect-pg-simple)
+-- ----------------------------
+CREATE TABLE IF NOT EXISTS "session" (
+  "sid" varchar NOT NULL COLLATE "default",
+  "sess" json NOT NULL,
+  "expire" timestamp(6) NOT NULL
+)
+WITH (OIDS=FALSE);
+
+ALTER TABLE "session" ADD CONSTRAINT "session_pkey" PRIMARY KEY ("sid") NOT DEFERRABLE INITIALLY IMMEDIATE;
+CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");
+
+-- ----------------------------
+-- Grant Permissions to web_app
+-- ----------------------------
+-- Grant usage on sequences (important for SERIAL columns)
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO web_app;
+
+-- Grant table permissions
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.users TO web_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.roles TO web_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.permissions TO web_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.ble_connections TO web_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public."session" TO web_app;
