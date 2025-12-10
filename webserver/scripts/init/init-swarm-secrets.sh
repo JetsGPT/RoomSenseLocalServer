@@ -127,6 +127,15 @@ init_secrets() {
         log_info "InfluxDB token already exists"
     fi
 
+    # MQTT password - Generate secure password
+    if ! secret_exists "mqtt_password"; then
+        MQTT_PASSWORD=$(generate_secure_secret 32)
+        create_secret "mqtt_password" "${MQTT_PASSWORD}"
+        log_info "Generated new MQTT password (64 hex characters)"
+    else
+        log_info "MQTT password already exists"
+    fi
+
     # Web App DB Password - Low privilege user
     if ! secret_exists "webapp_password"; then
         WEBAPP_PASSWORD=$(generate_secure_secret 32)
