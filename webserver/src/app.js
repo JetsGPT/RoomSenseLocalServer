@@ -41,7 +41,7 @@ try {
             .replace(/\r/g, '');
         if (secret) {
             dbPassword = secret;
-            console.log('✓ Using PostgreSQL password from Docker secret file');
+            console.log(`✓ Using PostgreSQL password from Docker secret file (Length: ${dbPassword.length}, Prefix: ${dbPassword.substring(0, 3)}***)`);
         }
     }
 } catch (error) {
