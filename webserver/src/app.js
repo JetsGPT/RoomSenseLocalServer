@@ -151,7 +151,14 @@ app.use(cookieParser());
 // CSRF Protection
 // We exclude the sensors data writing endpoint if it's being hit by a non-browser device that can't handle CSRF
 // But since it currently requires login (Session), valid clients must handle cookies anyway.
-const csrfProtection = csurf({ cookie: true });
+// But since it currently requires login (Session), valid clients must handle cookies anyway.
+const csrfProtection = csurf({
+    cookie: {
+        secure: true,
+        sameSite: 'none',
+        httpOnly: true
+    }
+});
 
 // Apply CSRF to all API routes, unless specifically excluded
 // For now, we apply it globally to /api
