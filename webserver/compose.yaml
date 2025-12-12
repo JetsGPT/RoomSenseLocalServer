@@ -167,6 +167,7 @@ services:
       - MQTT_CERT_FILE=/run/secrets/ssl_server_cert
       - MQTT_KEY_FILE=/run/secrets/ssl_server_key
       - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
+      - BLE_API_HOST=0.0.0.0
     # Port mapping for Windows/PC testing (use network_mode: host on Raspberry Pi)
     # For Raspberry Pi: uncomment network_mode below and comment out ports
     # ports:
