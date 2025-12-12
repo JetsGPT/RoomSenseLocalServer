@@ -289,4 +289,60 @@ router.get('/types', requireLogin, (req, res) => {
     });
 });
 
+/**
+ * GET /api/sensors/data/export/csv
+ * Export sensor data as CSV with optional filtering
+ */
+router.get('/data/export/csv', requireLogin, (req, res) => {
+    console.log('CSV export requested');
+
+    const sanitized = sanitizeQueryParams(req);
+    const fluxQuery = buildSecureFluxQuery(bucket, sanitized);
+
+    const data = [];
+    const queryClient = influxClient.getQueryApi(organisation);
+
+    queryClient.queryRows(fluxQuery, {
+        next: (row, tableMeta) => {
+            const tableObject = tableMeta.toObject(row);
+            data.push(formatSensorData(tableObject));
+        },
+        error: (error) => {
+            console.error(`CSV export query failed: ${error.message}`);
+            res.status(500).json({ error: 'Error exporting data.' });
+        },
+        complete: () => {
+            // Convert to CSV
+            if (data.length === 0) {
+                res.status(200).send('timestamp,sensor_box,sensor_type,value\n');
+                return;
+            }
+
+            // CSV header
+            const headers = ['timestamp', 'sensor_box', 'sensor_type', 'value'];
+            const csvHeader = headers.join(',') + '\n';
+
+            // CSV rows
+            const csvRows = data.map(row => {
+                return headers.map(header => {
+                    const value = row[header];
+                    // Escape values that contain commas or quotes
+                    if (typeof value === 'string' && (value.includes(',') || value.includes('"') || value.includes('\n'))) {
+                        return `"${value.replace(/"/g, '""')}"`;
+                    }
+                    return value;
+                }).join(',');
+            }).join('\n');
+
+            const csv = csvHeader + csvRows;
+
+            // Set headers for file download
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', `attachment; filename="sensor_data_${Date.now()}.csv"`);
+            res.status(200).send(csv);
+            console.log(`CSV export successful: ${data.length} rows`);
+        },
+    });
+});
+
 export default router;
