@@ -160,9 +160,12 @@ const csrfProtection = csurf({
     }
 });
 
-// Apply CSRF to all API routes, unless specifically excluded
+// Apply CSRF to all API routes, EXCLUDING /api/health
 // For now, we apply it globally to /api
-app.use('/api', csrfProtection);
+app.use('/api', (req, res, next) => {
+    if (req.path === '/health') return next();
+    csrfProtection(req, res, next);
+});
 
 // CSRF Token endpoint
 app.get('/api/csrf-token', csrfProtection, (req, res) => {
@@ -172,8 +175,11 @@ app.get('/api/csrf-token', csrfProtection, (req, res) => {
 
 // Serve static files (React app) - Place this before rate limiter/auth so assets load freely
 
-// Apply DB-backed permissions and rate limiting ONLY to API routes
-app.use('/api', ratePermissions());
+// Apply DB-backed permissions and rate limiting ONLY to API routes, EXCLUDING /api/health
+app.use('/api', (req, res, next) => {
+    if (req.path === '/health') return next();
+    ratePermissions()(req, res, next);
+});
 
 
 
