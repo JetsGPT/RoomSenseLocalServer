@@ -160,10 +160,10 @@ const csrfProtection = csurf({
     }
 });
 
-// Apply CSRF to all API routes, EXCLUDING /api/health
-// For now, we apply it globally to /api
+// Apply CSRF to all API routes, EXCLUDING health endpoints
 app.use('/api', (req, res, next) => {
-    if (req.path === '/health') return next();
+    const skipPaths = ['/health', '/devices/health', '/sensors', '/sensors/'];
+    if (skipPaths.includes(req.path)) return next();
     csrfProtection(req, res, next);
 });
 
@@ -175,14 +175,17 @@ app.get('/api/csrf-token', csrfProtection, (req, res) => {
 
 // Serve static files (React app) - Place this before rate limiter/auth so assets load freely
 
-// Apply DB-backed permissions and rate limiting ONLY to API routes, EXCLUDING /api/health
+// Apply DB-backed permissions and rate limiting ONLY to API routes, EXCLUDING health endpoints
 app.use('/api', (req, res, next) => {
-    if (req.path === '/health') return next();
+    const skipPaths = ['/health', '/devices/health', '/sensors', '/sensors/'];
+    if (skipPaths.includes(req.path)) return next();
     ratePermissions()(req, res, next);
 });
 
-
-
+// Generic Health Check (for Docker/K8s/Load Balancers)
+app.get('/api/health', (req, res) => {
+    res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
 // Initialize database pool for device router
 initDatabasePool(pool);
