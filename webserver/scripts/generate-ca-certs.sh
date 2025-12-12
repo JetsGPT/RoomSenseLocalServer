@@ -60,6 +60,7 @@ DNS.2 = localhost
 DNS.3 = influxdb
 DNS.4 = blegateway
 DNS.5 = mosquitto
+DNS.6 = roomsense_webserver
 IP.1 = 127.0.0.1
 IP.2 = 0.0.0.0
 # You can add static IPs here if known, e.g., IP.3 = 192.168.1.50
