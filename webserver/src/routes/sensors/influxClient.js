@@ -7,19 +7,19 @@ import path from 'path';
 // This avoids any potential issues with process.env or trimming
 let token = process.env.INFLUX_TOKEN;
 try {
-    const secretPath = '/run/secrets/influx_token';
-    if (fs.existsSync(secretPath)) {
-        const secret = fs.readFileSync(secretPath, 'utf8')
-            .replace(/\r\n/g, '')
-            .replace(/\n/g, '')
-            .replace(/\r/g, '');
-        if (secret) {
-            token = secret;
-            console.log('✓ Using InfluxDB token from Docker secret file');
-        }
+  const secretPath = '/run/secrets/influx_token';
+  if (fs.existsSync(secretPath)) {
+    const secret = fs.readFileSync(secretPath, 'utf8')
+      .replace(/\r\n/g, '')
+      .replace(/\n/g, '')
+      .replace(/\r/g, '');
+    if (secret) {
+      token = secret;
+      console.log('✓ Using InfluxDB token from Docker secret file');
     }
+  }
 } catch (error) {
-    console.warn(`⚠️  Could not read InfluxDB token secret file, using process.env.INFLUX_TOKEN: ${error.message}`);
+  console.warn(`⚠️  Could not read InfluxDB token secret file, using process.env.INFLUX_TOKEN: ${error.message}`);
 }
 
 // InfluxDB client configuration
@@ -29,13 +29,14 @@ const bucket = process.env.INFLUX_BUCKET;
 
 // Create secure HTTPS agent that validates the self-signed certificate
 const httpsAgent = new https.Agent({
-  ca: fs.readFileSync(path.join(process.cwd(), 'certs', 'influxdb-selfsigned.crt')),
+  // We trust the Root CA, which signed the InfluxDB cert
+  ca: fs.readFileSync('/run/secrets/ssl_root_ca'),
   rejectUnauthorized: true // This ensures certificate validation
 });
 
 // Create and export InfluxDB client with secure HTTPS agent
-const influxClient = new InfluxDB({ 
-  url, 
+const influxClient = new InfluxDB({
+  url,
   token,
   transportOptions: {
     agent: httpsAgent

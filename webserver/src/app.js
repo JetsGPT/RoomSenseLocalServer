@@ -205,18 +205,15 @@ app.use((err, req, res, next) => {
 
 
 // SSL certificate configuration
-// Generate certificates if they don't exist:
-// openssl req -x509 -newkey rsa:4096 -keyout certs/server.key -out certs/server.cert -days 365 -nodes
 let httpsOptions;
 try {
     httpsOptions = {
-        key: fs.readFileSync('./certs/server.key'),
-        cert: fs.readFileSync('./certs/server.cert'),
+        key: fs.readFileSync('/run/secrets/ssl_server_key'),
+        cert: fs.readFileSync('/run/secrets/ssl_server_cert'),
     };
 } catch (error) {
-    console.error('⚠️  SSL certificates not found in ./certs/');
-    console.error('   Generate them with: openssl req -x509 -newkey rsa:4096 -keyout certs/server.key -out certs/server.cert -days 365 -nodes');
-    console.error('   Or update the certificate paths in src/app.js');
+    console.error('⚠️  SSL secrets not found in /run/secrets/');
+    console.error('   Ensure Docker Swarm secrets ssl_server_key and ssl_server_cert are initialized.');
     process.exit(1);
 }
 

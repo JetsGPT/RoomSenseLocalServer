@@ -40,18 +40,16 @@ Internal script used for secret initialization. Generates cryptographically secu
 
 ## Utility Scripts
 
-### `generate-certs.sh` / `generate-certs.ps1`
-Generates self-signed SSL certificates for the webserver.
+### `generate-ca-certs.sh`
+Generates a local Root Certificate Authority (CA) and server certificates signed by it. This replaces simple self-signed certificates.
 
 **Usage:**
 - **Linux/macOS/Git Bash:**
   ```bash
-  ./scripts/generate-certs.sh
+  ./scripts/generate-ca-certs.sh
   ```
 - **Windows PowerShell:**
-  ```powershell
-  .\scripts\generate-certs.ps1
-  ```
+  Use Git Bash or WSL to run the bash script.
 
 ## Entrypoint Scripts (`entrypoints/`)
 

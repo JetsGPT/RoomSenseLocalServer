@@ -206,19 +206,50 @@ EOF
     mkdir -p postgres-init
     mkdir -p bletomqtt
     
-    # Create dummy certs if missing (to prevent mount errors)
-    if [ ! -f "certs/server.key" ] || [ ! -f "certs/server.cert" ]; then
-        log_warn "SSL certificates missing. Generating self-signed certificates..."
-        openssl req -x509 -newkey rsa:4096 -keyout certs/server.key -out certs/server.cert -days 365 -nodes -subj "/CN=localhost" 2>/dev/null
+    # Generate CA-signed certificates if missing
+    if [ ! -f "certs/server.key" ] || [ ! -f "certs/server.cert" ] || [ ! -f "certs/rootCA.crt" ]; then
+        log_info "Generating Local CA and Server Certificates..."
+        # Execute in subshell to preserve current directory
+        (bash ./scripts/generate-ca-certs.sh)
     fi
-    
-    # Create influxdb self-signed certs if missing
-    if [ ! -f "certs/influxdb-selfsigned.key" ] || [ ! -f "certs/influxdb-selfsigned.crt" ]; then
-        log_warn "InfluxDB certificates missing. Generating self-signed certificates..."
-        openssl req -x509 -newkey rsa:4096 -keyout certs/influxdb-selfsigned.key -out certs/influxdb-selfsigned.crt -days 365 -nodes -subj "/CN=influxdb" 2>/dev/null
-    fi
-    
+
     log_info "Mount points verified"
+}
+
+init_cert_secrets() {
+    log_step "Initializing SSL Certificate Secrets..."
+    
+    # 1. Ensure certs exist first
+    if [ ! -f "certs/server.key" ] || [ ! -f "certs/server.cert" ] || [ ! -f "certs/rootCA.crt" ]; then
+        log_info "Generating Local CA and Server Certificates..."
+        # Execute in subshell to preserve current directory
+        (bash ./scripts/generate-ca-certs.sh)
+    fi
+
+    # 2. Define the mapping of Secret Name -> File Path
+    # Format: "secret_name|file_path"
+    secrets=(
+        "ssl_server_key|certs/server.key"
+        "ssl_server_cert|certs/server.cert"
+        "ssl_root_ca|certs/rootCA.crt"
+    )
+
+    for s in "${secrets[@]}"; do
+        IFS="|" read -r name file <<< "$s"
+        
+        if docker secret inspect "$name" > /dev/null 2>&1; then
+            log_info "Secret '$name' already exists"
+        else
+            log_info "Creating secret '$name' from file '$file'..."
+            # Note: We use the file directly here, not printf/echo
+            if docker secret create "$name" "$file"; then
+                log_info "Secret '$name' created successfully"
+            else
+                log_error "Failed to create secret '$name'"
+                exit 1
+            fi
+        fi
+    done
 }
 
 # Main execution
@@ -236,6 +267,7 @@ main() {
     
     # Initialize secrets
     init_secrets
+    init_cert_secrets  # <--- Initialize cert secrets
     
     # Check and create required mount points
     check_mounts

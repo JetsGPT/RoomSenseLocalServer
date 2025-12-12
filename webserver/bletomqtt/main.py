@@ -12,6 +12,7 @@ if sys.platform.startswith("win"):
 from bleak import BleakClient, BleakScanner, BleakError
 from bleak.backends.device import BLEDevice
 import aiomqtt
+import ssl
 import json
 import time
 import os
@@ -35,6 +36,12 @@ MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_TOPIC_BASE = "ble/devices"
 MQTT_USERNAME = os.getenv("MQTT_USERNAME")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
+MQTT_TLS = os.getenv("MQTT_TLS", "false").lower() == "true"
+MQTT_CA_FILE = os.getenv("MQTT_CA_FILE", "/certs/rootCA.crt")
+MQTT_CERT_FILE = os.getenv("MQTT_CERT_FILE", "/certs/server.cert")
+MQTT_KEY_FILE = os.getenv("MQTT_KEY_FILE", "/certs/server.key")
+# If connecting to localhost/internal name, we might need to disable hostname check if cert doesn't match exactly
+MQTT_TLS_INSECURE = os.getenv("MQTT_TLS_INSECURE", "false").lower() == "true"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 log = logging.getLogger("ble_gateway")
@@ -365,6 +372,26 @@ async def lifespan(app: FastAPI):
     mqtt_kwargs = {"hostname": MQTT_BROKER, "port": MQTT_PORT}
     if MQTT_USERNAME: mqtt_kwargs["username"] = MQTT_USERNAME
     if MQTT_PASSWORD: mqtt_kwargs["password"] = MQTT_PASSWORD
+    
+    # Configure TLS if enabled
+    if MQTT_TLS:
+        log.info("Configuring MQTT TLS...")
+        if not os.path.exists(MQTT_CA_FILE):
+             log.error("CA File not found at %s", MQTT_CA_FILE)
+             # Fallback or exit? For safety we continue but it will likely fail.
+        
+        tls_context = ssl.create_default_context(cafile=MQTT_CA_FILE)
+        
+        # If client auth is required (optional, but good if we have keys)
+        if os.path.exists(MQTT_CERT_FILE) and os.path.exists(MQTT_KEY_FILE):
+            log.info("Loading client cert/key for MQTT")
+            tls_context.load_cert_chain(certfile=MQTT_CERT_FILE, keyfile=MQTT_KEY_FILE)
+            
+        if MQTT_TLS_INSECURE:
+            tls_context.check_hostname = False
+            tls_context.verify_mode = ssl.CERT_NONE
+            
+        mqtt_kwargs["tls_context"] = tls_context
     
     # Use MQTT client as async context manager
     mqtt_client_context = aiomqtt.Client(**mqtt_kwargs)

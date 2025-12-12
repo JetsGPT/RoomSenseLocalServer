@@ -4,32 +4,27 @@ This directory contains SSL/TLS certificates for the application.
 
 ## Files
 
-- `server.cert` - SSL certificate file
-- `server.key` - SSL private key file (required)
+- `rootCA.crt` - Root Certificate Authority (Trust this on client devices)
+- `rootCA.key` - CA Private Key (Keep secret)
+- `server.cert` - Server SSL certificate signed by Root CA
+- `server.key` - Server Private Key
 
 ## Certificate Generation
 
-### Quick Generation
+### Generation Script
 
 **On Linux/macOS or Git Bash:**
 ```bash
-./scripts/generate-certs.sh
+./scripts/generate-ca-certs.sh
 ```
 
-**On Windows PowerShell:**
-```powershell
-.\scripts\generate-certs.ps1
-```
+This will create:
+1. A Root CA (`rootCA.crt` and `rootCA.key`) if they don't exist.
+2. A server certificate valid for `roomsense.local`, `localhost`, and common IPs, signed by the Root CA.
 
-### Manual Generation
+### Trusting the CA
 
-For development, you can generate a self-signed certificate manually:
-
-```bash
-openssl req -x509 -newkey rsa:4096 -keyout certs/server.key -out certs/server.cert -days 365 -nodes
-```
-
-**Security Note:** Self-signed certificates are for development only. For production, use certificates from a trusted Certificate Authority (CA).
+To stop browser warnings, import `rootCA.crt` into your device's Trusted Root Certification Authorities store.
 
 ## Certificate Location
 
