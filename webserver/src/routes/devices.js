@@ -31,6 +31,7 @@ async function proxyToGateway(res, url, options, timeout = REQUEST_TIMEOUT_MS) {
             headers: {
                 ...options.headers,
                 'Content-Type': 'application/json',
+                'X-API-Key': process.env.BLE_GATEWAY_API_KEY || '',
             },
         });
 
@@ -109,7 +110,10 @@ router.get('/scan', authMiddleware, async (req, res) => {
         const response = await fetch(`${BLE_GATEWAY_URL}/scan`, {
             method: 'GET',
             signal: controller.signal,
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': process.env.BLE_GATEWAY_API_KEY || '',
+            },
         });
 
         clearTimeout(timeoutId);
@@ -201,7 +205,10 @@ router.get('/connections', authMiddleware, async (req, res) => {
         const response = await fetch(`${BLE_GATEWAY_URL}/connections`, {
             method: 'GET',
             signal: controller.signal,
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': process.env.BLE_GATEWAY_API_KEY || '',
+            },
         });
 
         clearTimeout(timeoutId);
@@ -342,7 +349,10 @@ router.post('/connect/:address', authMiddleware, async (req, res) => {
         const response = await fetch(`${BLE_GATEWAY_URL}/connect/${encodeURIComponent(address)}`, {
             method: 'POST',
             signal: controller.signal,
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': process.env.BLE_GATEWAY_API_KEY || '',
+            },
         });
 
         clearTimeout(timeoutId);
@@ -483,7 +493,10 @@ router.post('/disconnect/:address', authMiddleware, async (req, res) => {
         const response = await fetch(`${BLE_GATEWAY_URL}/disconnect/${encodeURIComponent(address)}`, {
             method: 'POST',
             signal: controller.signal,
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': process.env.BLE_GATEWAY_API_KEY || '',
+            },
         });
 
         clearTimeout(timeoutId);
@@ -618,7 +631,10 @@ export async function restorePersistedConnections() {
             const response = await fetch(`${BLE_GATEWAY_URL}/connect/${encodeURIComponent(address)}`, {
                 method: 'POST',
                 signal: controller.signal,
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-API-Key': process.env.BLE_GATEWAY_API_KEY || '',
+                },
             });
 
             clearTimeout(timeoutId);

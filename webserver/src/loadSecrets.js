@@ -53,6 +53,7 @@ export function loadEnvironment() {
         PGPASSWORD: 'pgpassword',
         INFLUX_PASSWORD: 'influx_password',
         INFLUX_TOKEN: 'influx_token',
+        BLE_GATEWAY_API_KEY: 'ble_gateway_api_key',
     };
 
     let secretsLoaded = 0;

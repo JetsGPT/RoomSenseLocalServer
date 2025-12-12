@@ -16,6 +16,8 @@ secrets:
     external: true  # Created by init service
   webapp_password:
     external: true  # Created by init service
+  ble_gateway_api_key:
+    external: true  # Created by init service
 
 services:
   # Note: Docker Swarm and secrets are initialized by scripts/init/start.sh script
@@ -42,6 +44,7 @@ services:
         target: pgpassword
       - influx_password
       - influx_token
+      - ble_gateway_api_key
     environment:
       # Non-sensitive defaults (can be overridden by .env file)
       PGHOST: ${PGHOST:-postgres}
@@ -154,6 +157,7 @@ services:
     #   - "8080:8080"
     secrets:
       - mqtt_password
+      - ble_gateway_api_key
     entrypoint: ["/bin/sh", "/blegateway-entrypoint.sh", "python", "main.py"]
     # Note: depends_on, devices, and cap_add have limitations in Swarm mode
     deploy:

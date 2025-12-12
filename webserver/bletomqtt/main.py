@@ -403,6 +403,72 @@ async def scan_devices():
         )
         return JSONResponse(content=results)
     
+    except Exception as e:
+        log.exception("Unexpected error during BLE scan: %s", e)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+# ================================================================
+# Security Dependency
+# ================================================================
+from fastapi.security import APIKeyHeader
+from fastapi import Security, Depends
+
+API_KEY_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=True)
+
+async def get_api_key(api_key_header: str = Security(api_key_header)):
+    """
+    Retreives the API Key from Docker Secrets.
+    Validates the request header against the secret.
+    """
+    # 1. Try to read from Docker Secret file
+    secret_path = "/run/secrets/ble_gateway_api_key"
+    expected_key = None
+    
+    if os.path.exists(secret_path):
+        try:
+            with open(secret_path, "r") as f:
+                expected_key = f.read().strip()
+        except Exception as e:
+            log.error("Failed to read API Key secret: %s", e)
+            raise HTTPException(status_code=500, detail="Security configuration error")
+    
+    # 2. Fallback to Env Var (for local dev without secrets, if needed)
+    if not expected_key:
+        expected_key = os.getenv("BLE_GATEWAY_API_KEY")
+        
+    if not expected_key:
+        # If no key is configured, log specific warning but deny access to be safe
+        log.critical("NO API KEY CONFIGURED! All requests will fail.")
+        raise HTTPException(status_code=500, detail="Server security not configured")
+
+    if api_key_header != expected_key:
+        log.warning("Invalid API Key attempt")
+        raise HTTPException(status_code=403, detail="Could not validate credentials")
+    
+    return api_key_header
+
+# <-- CHANGED: Apply security to all critical endpoints
+@app.get("/scan", dependencies=[Depends(get_api_key)])
+async def scan_devices():
+    """
+    Triggers a new BLE scan for devices matching the filter.
+    Returns a list of devices with address and name.
+    """
+    if _global_manager is None:
+        raise HTTPException(status_code=503, detail="BLE manager not initialized")
+    
+    try:
+        # Use asyncio.wait_for to enforce timeout, as scan_lock
+        # might make this call wait
+        log.info("API: Received /scan request.")
+        results = await asyncio.wait_for(
+            _global_manager.scan_for_devices(),
+            timeout=SCAN_DURATION + 2.0 # Allow for scan duration + buffer
+        )
+        return JSONResponse(content=results)
+    
     except asyncio.TimeoutError:
         log.warning("BLE scan timed out")
         raise HTTPException(status_code=504, detail="Scan operation timed out")
@@ -414,7 +480,7 @@ async def scan_devices():
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 # <-- CHANGED: New endpoint to connect to a device
-@app.post("/connect/{address}")
+@app.post("/connect/{address}", dependencies=[Depends(get_api_key)])
 async def connect_device(address: str):
     """
     Connects to a specific BLE device by its address.
@@ -432,7 +498,7 @@ async def connect_device(address: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 # <-- CHANGED: New endpoint to disconnect
-@app.post("/disconnect/{address}")
+@app.post("/disconnect/{address}", dependencies=[Depends(get_api_key)])
 async def disconnect_device(address: str):
     """Disconnects from a specific BLE device by its address."""
     if _global_manager is None:
@@ -445,7 +511,7 @@ async def disconnect_device(address: str):
         raise HTTPException(status_code=404, detail=str(e)) # Not connected
 
 # <-- CHANGED: New endpoint to see active connections
-@app.get("/connections")
+@app.get("/connections", dependencies=[Depends(get_api_key)])
 async def get_active_connections():
     """Returns a list of addresses for all actively connected devices."""
     if _global_manager is None:
@@ -461,7 +527,7 @@ async def get_active_connections():
         for addr, p in active_devices.items()
     ])
 
-@app.get("/health")
+@app.get("/health", dependencies=[Depends(get_api_key)])
 async def health_check():
     """Health check endpoint."""
     return JSONResponse(content={
@@ -477,7 +543,8 @@ async def health_check():
 async def main():
     """Main entry point - runs FastAPI server."""
     port = int(os.getenv("BLE_API_PORT", "8080"))
-    host = os.getenv("BLE_API_HOST", "0.0.0.0")
+    # Security: Default to localhost to prevent network exposure
+    host = os.getenv("BLE_API_HOST", "127.0.0.1")
     
     log.info("Starting BLE Gateway HTTP API on %s:%d", host, port)
     config = uvicorn.Config(app, host=host, port=port, log_level="info")

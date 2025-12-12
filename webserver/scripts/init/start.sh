@@ -162,6 +162,15 @@ init_secrets() {
     else
         log_info "WebApp DB password already exists"
     fi
+
+    # BLE Gateway API Key
+    if ! secret_exists "ble_gateway_api_key"; then
+        BLE_API_KEY=$(generate_secure_secret 32)
+        create_secret "ble_gateway_api_key" "${BLE_API_KEY}"
+        log_info "Generated new BLE Gateway API Key (64 hex characters)"
+    else
+        log_info "BLE Gateway API Key already exists"
+    fi
     
     log_info "All secrets initialized successfully!"
 }

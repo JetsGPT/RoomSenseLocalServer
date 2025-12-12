@@ -178,6 +178,24 @@ function Initialize-Secrets {
     } else {
         Write-Info "MQTT password already exists"
     }
+
+    # Web App DB Password - Low privilege user
+    if (-not (Test-SecretExists -SecretName "webapp_password")) {
+        $webAppPassword = New-SecureSecret -Length 32
+        New-DockerSecret -SecretName "webapp_password" -SecretValue $webAppPassword
+        Write-Info "Generated new WebApp DB password (64 hex characters)"
+    } else {
+        Write-Info "WebApp DB password already exists"
+    }
+
+    # BLE Gateway API Key
+    if (-not (Test-SecretExists -SecretName "ble_gateway_api_key")) {
+        $bleApiKey = New-SecureSecret -Length 32
+        New-DockerSecret -SecretName "ble_gateway_api_key" -SecretValue $bleApiKey
+        Write-Info "Generated new BLE Gateway API Key (64 hex characters)"
+    } else {
+        Write-Info "BLE Gateway API Key already exists"
+    }
     
     Write-Info "All secrets initialized successfully!"
 }
