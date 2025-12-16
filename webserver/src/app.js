@@ -68,6 +68,7 @@ import userRouter from './routes/users.js';
 import sensorRouter from './routes/sensors/index.js';
 import testingRouter from './routes/testing.js';
 import deviceRouter, { initDatabasePool, restorePersistedConnections } from './routes/devices.js';
+import {startGatewayClient} from "./gatewayClient.js";
 app.use(express.json());
 // Make pool available to middlewares
 app.locals.pool = pool;
@@ -229,7 +230,10 @@ try {
 https.createServer(httpsOptions, app).listen(PORT, '0.0.0.0', async () => {
     console.log(`✅ HTTPS Server running on https://0.0.0.0:${PORT}`);
     console.log(`🌐 Access from local network: https://[RASPBERRY_PI_IP]:${PORT}`);
-
+    console.log('-----------------------------------');
+    console.log('🚀 Starting Remote Access Gateway...');
+    startGatewayClient();
+    console.log('-----------------------------------');
     // Restore persisted BLE connections after server starts
     // Wait a bit for the BLE gateway to be ready
     setTimeout(async () => {
