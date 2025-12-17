@@ -99,6 +99,8 @@ app.use(cors({
             'ionic://localhost',
             'https://localhost',
             'https://roomsense.local',
+            'https://roomsense.info',
+            'https://proxy.roomsense.info'
         ];
 
         const isAllowed = allowedOrigins.some(allowedOrigin => {

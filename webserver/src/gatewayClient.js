@@ -32,7 +32,9 @@ function saveIdentity(id) {
 export function startGatewayClient() {
     console.log(`[Gateway] Connecting to ${GATEWAY_URL}...`);
 
-    const ws = new WebSocket(GATEWAY_URL);
+    const ws = new WebSocket(GATEWAY_URL, {
+        rejectUnauthorized: false
+    });
 
     ws.on('open', () => {
         const myId = getIdentity();
