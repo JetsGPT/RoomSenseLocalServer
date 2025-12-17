@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import axios from 'axios';
 import { fileURLToPath } from 'url';
+import https from 'https';
 
 // Helper to get directory
 const __filename = fileURLToPath(import.meta.url);
@@ -62,6 +63,9 @@ export function startGatewayClient() {
             console.log(`[Gateway] 📥 Received ${method} ${path}`);
 
             try {
+                const agent = new https.Agent({
+                    rejectUnauthorized: false
+                });
 
                 const response = await axios({
                     method: method,
@@ -69,10 +73,10 @@ export function startGatewayClient() {
                     headers: headers,
                     data: body,
                     params: new URLSearchParams(query),
-                    validateStatus: () => true
+                    validateStatus: () => true,
+                    httpsAgent: agent 
                 });
 
-                // Send Result back to Cloud
                 ws.send(JSON.stringify({
                     type: 'RESPONSE',
                     request_id: request_id,
