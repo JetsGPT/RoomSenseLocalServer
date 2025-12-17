@@ -42,7 +42,7 @@ services:
     # Mount .env file for non-sensitive configuration and certs
     volumes:
       - ./.env:/webserver/.env:ro
-      - ./server_identity.json:/webserver/server_identity.json
+      - ./src/server_identity.json:/webserver/server_identity.json
       # Certs volume removed, using secrets
     # Only grant access to secrets this service needs
     secrets:
