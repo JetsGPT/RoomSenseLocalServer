@@ -9,8 +9,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const IDENTITY_FILE = path.join(__dirname, '../server_identity.json'); //this is only for testing purposes
-const GATEWAY_URL = process.env.GATEWAY_URL || 'wss://proxy.roomsense.ifno:8443/ws/gateway';
-const LOCAL_API_URL = 'http://localhost:8081'; // Where Express is running locally
+const GATEWAY_URL = process.env.GATEWAY_URL || 'wss://proxy.roomsense.info:8443/ws/gateway';
+const LOCAL_API_URL = 'https://localhost:8081'; // Where Express is running locally
 
 function getIdentity() {
     if (fs.existsSync(IDENTITY_FILE)) {
