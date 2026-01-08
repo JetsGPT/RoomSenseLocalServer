@@ -1,0 +1,2 @@
+# This file ensures the directory exists in git. 
+# The React build artifacts will be copied here during deployment.
