@@ -48,6 +48,7 @@ try {
     console.warn(`⚠️  Could not read PostgreSQL secret file, using process.env.PGPASSWORD: ${error.message}`);
 }
 
+
 const pool = new Pool({
     user: process.env.PGUSER || "postgres",
     password: dbPassword,
@@ -55,6 +56,25 @@ const pool = new Pool({
     port: process.env.PGPORT ? parseInt(process.env.PGPORT) : 5432,
     database: process.env.PGDATABASE || "user",
 });
+
+// Helper: Wait for Database to be ready (handling DNS/Network startup delays)
+async function waitForDatabase(pool, maxRetries = 15, delayMs = 2000) {
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            await pool.query('SELECT 1');
+            console.log('✅ PostgreSQL is reachable.');
+            return;
+        } catch (err) {
+            console.log(`⏳ Waiting for PostgreSQL (Attempt ${i + 1}/${maxRetries})... Error: ${err.message}`);
+            await new Promise(res => setTimeout(res, delayMs));
+        }
+    }
+    console.error('❌ Could not connect to PostgreSQL after multiple attempts.');
+    process.exit(1);
+}
+
+// Block startup until DB is ready
+await waitForDatabase(pool);
 
 //---------
 
@@ -68,7 +88,7 @@ import userRouter from './routes/users.js';
 import sensorRouter from './routes/sensors/index.js';
 import testingRouter from './routes/testing.js';
 import deviceRouter, { initDatabasePool, restorePersistedConnections } from './routes/devices.js';
-import {startGatewayClient} from "./gatewayClient.js";
+import { startGatewayClient } from "./gatewayClient.js";
 app.use(express.json());
 // Make pool available to middlewares
 app.locals.pool = pool;
