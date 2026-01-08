@@ -672,4 +672,48 @@ export async function restorePersistedConnections() {
     console.log('[BLE] Connection restoration completed');
 }
 
+/**
+ * POST /api/devices/pair/:address
+ * Submits the PIN code for a device currently attempting to pair.
+ */
+router.post('/pair/:address', authMiddleware, async (req, res) => {
+    const { address } = req.params;
+    const { pin } = req.body;
+
+    if (!address || !pin) {
+        return res.status(400).json({ error: 'Missing address or PIN' });
+    }
+
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+        const response = await fetch(`${BLE_GATEWAY_URL}/pair/${encodeURIComponent(address)}`, {
+            method: 'POST',
+            signal: controller.signal,
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': process.env.BLE_GATEWAY_API_KEY || '',
+            },
+            body: JSON.stringify({ pin })
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            let detail = 'No details';
+            try { detail = JSON.parse(errorText).detail; } catch (e) { }
+            return res.status(response.status).json({ error: 'Pairing failed', detail });
+        }
+
+        const data = await response.json();
+        return res.status(200).json(data);
+
+    } catch (error) {
+        console.error('Error submitting PIN:', error);
+        return res.status(500).json({ error: 'Internal server error', detail: error.message });
+    }
+});
+
 export default router;
