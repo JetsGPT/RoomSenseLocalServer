@@ -344,6 +344,9 @@ class BLEConnectionManager:
             # Fallback: try to create a device object if not in scan
             device = BLEDevice(address, name="Unknown")
 
+        # Clear any stale pairing state before starting a fresh connection
+        self.clear_pairing_request(address)
+
         conn = BLEPeripheral(device, device.name, self.mqtt_client)
         self.peripherals[address] = conn
         conn.start()

@@ -277,9 +277,24 @@ router.get('/connections', authMiddleware, async (req, res) => {
                         } else if (conn.box_name) {
                             conn.name = conn.box_name;
                         }
-                    } else if (conn.box_name) {
-                        // If not in DB but has box_name, use it as display name too
-                        conn.name = conn.box_name;
+                    } else {
+                        // Device active but not in DB -> Auto-persist
+                        // Use box_name (if available) or existing name or address as a fallback
+                        const technicalName = conn.box_name || conn.name || conn.address;
+
+                        updates.push(pool.query(
+                            `INSERT INTO ble_connections (address, name, connected_at, last_seen, is_active)
+                             VALUES ($1, $2, NOW(), NOW(), TRUE)
+                             ON CONFLICT (address) DO UPDATE SET 
+                                 is_active = TRUE, 
+                                 last_seen = NOW(),
+                                 name = COALESCE(ble_connections.name, EXCLUDED.name)`,
+                            [conn.address, technicalName]
+                        ));
+
+                        // Set display props for this response so UI shows it correctly immediately
+                        conn.original_name = technicalName;
+                        conn.name = technicalName;
                     }
                 });
 
@@ -382,8 +397,9 @@ router.post('/connect/:address', authMiddleware, async (req, res) => {
 
         const data = await response.json();
 
-        // If connection successful, persist to database
-        if (pool && data.status === 'connecting') {
+        // If connection successful (or pairing started), persist to database
+        // We exclude 'connecting' because that usually means it timed out without result
+        if (pool && data.status === 'connected') {
             try {
                 // Only update 'name' (technical ID) if it's not set or if explicitly provided for new device
                 // We do NOT update display_name here, that's done via rename endpoint
