@@ -403,9 +403,9 @@ async def connect_device(address: str):
     try:
         conn = await _global_manager.connect_to_device(address)
         
-        # Poll briefly to check if we hit the pairing state
-        for _ in range(10): 
-            await asyncio.sleep(0.2)
+        # Poll for up to 30 seconds to check if we hit the pairing state
+        for _ in range(60): 
+            await asyncio.sleep(0.5)
             # Check if this address is waiting for a PIN
             if address.upper() in _global_manager.pending_pairing_requests:
                 return JSONResponse(content={"status": "pin_required", "address": address})
