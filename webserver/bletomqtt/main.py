@@ -314,9 +314,9 @@ class BLEConnectionManager:
     async def scan_for_devices(self) -> List[dict]:
         async with self._scan_lock:
             log.info("Scanning...")
-            scanner = BleakScanner()
+            scanner = BleakScanner(scanning_mode="active")
             await scanner.start()
-            await asyncio.sleep(SCAN_DURATION)
+            await asyncio.sleep(SCAN_DURATION) # Increased to 10s to ensure name resolution
             await scanner.stop()
             
             self._last_scan_devices.clear()
