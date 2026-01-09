@@ -217,9 +217,16 @@ class BLEPeripheral:
                     self.status = "disconnected"
                 self.client.disconnected_callback = _on_disconnect
 
-                # If we are here, we are paired or didn't need it.
                 # Attempt to read protected metadata. This SHOULD trigger the pairing request.
-                await self._read_metadata()
+                try:
+                    await self._read_metadata()
+                except Exception as e:
+                    log.error("[%s] Pairing/Metadata failed: %s. Unpairing to clean state.", self.address, e)
+                    try:
+                        await self.client.unpair()
+                    except:
+                        pass
+                    raise e
                 
                 # NOW we are truly ready and authenticated
                 self.status = "connected"
