@@ -321,8 +321,8 @@ class BLEConnectionManager:
             
             self._last_scan_devices.clear()
             matches = []
-            for d in scanner.discovered_devices:
-                name = d.name or ""
+            for d, adv in scanner.discovered_devices_and_advertisement_data.values():
+                name = d.name or adv.local_name or ""
                 # Simple filter by name
                 if name.upper().startswith(TARGET_NAME_PREFIX.upper()):
                     self._last_scan_devices[d.address] = d
