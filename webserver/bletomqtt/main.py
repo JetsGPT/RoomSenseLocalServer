@@ -209,7 +209,9 @@ class BLEPeripheral:
                 await self.client.connect()
                 
                 log.info("[%s] Connected", self.address)
-                self.status = "connected"
+                # Don't set "connected" yet. We are technically connected but arguably 
+                # still performing the security handshake (triggered by read_metadata or pair).
+                self.status = "authenticating"
 
                 def _on_disconnect(_client):
                     log.warning("[%s] Disconnected.", self.address)
@@ -217,7 +219,11 @@ class BLEPeripheral:
                 self.client.disconnected_callback = _on_disconnect
 
                 # If we are here, we are paired or didn't need it.
+                # Attempt to read protected metadata. This SHOULD trigger the pairing request.
                 await self._read_metadata()
+                
+                # NOW we are truly ready and authenticated
+                self.status = "connected"
                 await self.client.start_notify(CUSTOM_SENSOR_CHAR_UUID, self._on_notify)
                 
                 backoff = 1
