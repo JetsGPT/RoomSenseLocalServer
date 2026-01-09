@@ -14,7 +14,8 @@ const authMiddleware = requireLogin;
 // BLE Gateway API endpoint
 const BLE_GATEWAY_URL = process.env.BLE_GATEWAY_URL || 'http://blegateway:8080';
 const SCAN_TIMEOUT_MS = 10000; // 10 seconds max (Python scan is 8s + 2s buffer)
-const REQUEST_TIMEOUT_MS = 5000; // 5 seconds for faster requests
+// Increased to 40s to accommodate the 30s long-poll for BLE pairing
+const REQUEST_TIMEOUT_MS = 40000;
 
 /**
  * Generic error handler for proxying requests to the BLE gateway.

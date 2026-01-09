@@ -147,12 +147,11 @@ class BLEPeripheral:
         self.status = "disconnected" 
 
     async def _read_metadata(self):
-        try:
-            box = await self.client.read_gatt_char(CUSTOM_BOX_CHAR_UUID)
-            self.box_address = box.decode(errors="ignore").strip() or None
-            log.info("[%s] Successfully read box_address: %r", self.address, self.box_address)
-        except Exception as e:
-            log.warning("[%s] Box char read skipped/failed: %s", self.address, e)
+        # NOTE: We intentionally let exceptions bubble up here.
+        # If reading this secured char fails (e.g. Auth failed), we MUST NOT proceed to "connected".
+        box = await self.client.read_gatt_char(CUSTOM_BOX_CHAR_UUID)
+        self.box_address = box.decode(errors="ignore").strip() or None
+        log.info("[%s] Successfully read box_address: %r", self.address, self.box_address)
 
     async def _get_sensor_type_from_descriptor(self) -> Optional[str]:
         try:
