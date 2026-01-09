@@ -82,8 +82,8 @@ class BlueZAgent(ServiceInterface):
         """
         log.info(f"[Agent] RequestPasskey for {device}")
         
-        # Convert DBus path to MAC address (e.g., /org/bluez/hci0/dev_XX_XX_XX... -> XX:XX:XX...)
-        address = device.split('_')[-1].replace('_', ':').upper()
+        # Convert DBus path to MAC address (e.g., /org/bluez/hci0/dev_2C_BC_... -> 2C:BC:...)
+        address = device.split('/')[-1].replace('dev_', '').replace('_', ':').upper()
         
         # Create a future to wait for the PIN from the API
         loop = asyncio.get_running_loop()
