@@ -292,11 +292,51 @@ class BLEPeripheral:
                         self.manager.signal_state_change(self.address)
                 self.client.disconnected_callback = _on_disconnect
 
+                # Explicitly pair BEFORE trying to read encrypted characteristics.
+                # This is critical: pair() will block until the Agent's RequestPasskey()
+                # returns with the user-provided PIN. Without this, read_gatt_char() 
+                # times out after ~5 seconds before the user can enter the PIN.
+                try:
+                    log.info("[%s] Starting pairing (waiting for PIN entry)...", self.address)
+                    # Use a long timeout to give user time to enter PIN
+                    # The Agent has a 25-second timeout, so 60 seconds here is plenty
+                    await asyncio.wait_for(self.client.pair(), timeout=60.0)
+                    log.info("[%s] Pairing successful!", self.address)
+                except asyncio.TimeoutError:
+                    log.error("[%s] Pairing timed out (no PIN entered within 60 seconds)", self.address)
+                    self._pairing_failed = True
+                    self.status = "pairing_failed"
+                    if self.manager:
+                        self.manager.clear_pairing_request(self.address)
+                        self.manager.signal_state_change(self.address)
+                    try:
+                        await self.client.disconnect()
+                    except Exception:
+                        pass
+                    break
+                except Exception as e:
+                    log.error("[%s] Pairing failed: %s", self.address, e)
+                    self._pairing_failed = True
+                    self.status = "pairing_failed"
+                    try:
+                        await self.client.unpair()
+                    except Exception:
+                        pass
+                    try:
+                        await self.client.disconnect()
+                    except Exception:
+                        pass
+                    if self.manager:
+                        self.manager.clear_pairing_request(self.address)
+                        self.manager.signal_state_change(self.address)
+                    break
+
+                # Now that we're paired, read the metadata
                 try:
                     await self._read_metadata()
                 except Exception as e:
-                    log.error("[%s] Pairing/Metadata failed: %s. Marking as pairing failure.", self.address, e)
-                    self._pairing_failed = True  # Prevent auto-retry
+                    log.error("[%s] Metadata read failed after pairing: %s", self.address, e)
+                    self._pairing_failed = True
                     self.status = "pairing_failed"
                     try:
                         await self.client.unpair()
