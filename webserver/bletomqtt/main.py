@@ -390,7 +390,7 @@ class BLEConnectionManager:
             obj = self.bus.get_proxy_object('org.bluez', '/org/bluez', introspection)
             agent_manager = obj.get_interface('org.bluez.AgentManager1')
             
-            await agent_manager.call_register_agent(AGENT_PATH, "KeyboardDisplay")
+            await agent_manager.call_register_agent(AGENT_PATH, "KeyboardOnly")
             
             # Try to become the default agent, but handle failure gracefully
             try:
