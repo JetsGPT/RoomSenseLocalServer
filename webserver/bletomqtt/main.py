@@ -209,7 +209,9 @@ class BLEPeripheral:
         self._stopping = False
         self.box_address: Optional[str] = None
         # Track connection state for API feedback
-        self.status = "disconnected" 
+        self.status = "disconnected"
+        # Track if pairing specifically failed - prevents auto-retry which causes rapid connect cycles
+        self._pairing_failed = False 
 
     async def _read_metadata(self):
         # NOTE: We intentionally let exceptions bubble up here.
@@ -293,12 +295,22 @@ class BLEPeripheral:
                 try:
                     await self._read_metadata()
                 except Exception as e:
-                    log.error("[%s] Pairing/Metadata failed: %s. Unpairing to clean state.", self.address, e)
+                    log.error("[%s] Pairing/Metadata failed: %s. Marking as pairing failure.", self.address, e)
+                    self._pairing_failed = True  # Prevent auto-retry
+                    self.status = "pairing_failed"
                     try:
                         await self.client.unpair()
                     except Exception:
                         pass
-                    raise e
+                    try:
+                        await self.client.disconnect()
+                    except Exception:
+                        pass
+                    if self.manager:
+                        self.manager.clear_pairing_request(self.address)
+                        self.manager.signal_state_change(self.address)
+                    # Don't raise - break out of the loop instead
+                    break
                 
                 # NOW we are truly ready and authenticated
                 self.status = "connected"
@@ -327,7 +339,14 @@ class BLEPeripheral:
 
             except (BleakError, asyncio.TimeoutError) as e:
                 log.warning("[%s] BLE error: %s", self.address, e)
-                self.status = "error"
+                # Check if this is likely a pairing-related error
+                error_str = str(e).lower()
+                if "auth" in error_str or "pair" in error_str or "encrypt" in error_str or "security" in error_str:
+                    log.warning("[%s] Detected pairing-related error, marking as pairing failure", self.address)
+                    self._pairing_failed = True
+                    self.status = "pairing_failed"
+                else:
+                    self.status = "error"
                 # Clean up any pending pairing request on failure
                 if self.manager:
                     self.manager.clear_pairing_request(self.address)
@@ -340,8 +359,12 @@ class BLEPeripheral:
                     self.manager.clear_pairing_request(self.address)
                     self.manager.signal_state_change(self.address)
 
-            if self._stopping: break
-            await asyncio.sleep(backoff)
+            # Don't retry if pairing failed or we're stopping
+            if self._stopping or self._pairing_failed:
+                break
+            
+            # Minimum 5 second delay before retry to let ESP32 state settle
+            await asyncio.sleep(max(backoff, 5))
             backoff = min(backoff * 2, 30)
 
     def start(self):
@@ -466,6 +489,31 @@ class BLEConnectionManager:
                     matches.append({"address": d.address, "name": name})
             return matches
 
+    async def remove_bluez_device(self, address: str):
+        """Remove a device from BlueZ completely (clears bond/pairing info).
+        
+        This is important to call before fresh pairing attempts to avoid
+        stale keys causing authentication failures.
+        """
+        if sys.platform != "linux" or not self.bus:
+            return
+        
+        try:
+            # Convert MAC address to BlueZ device path format
+            # e.g., 2C:BC:BB:4C:2E:26 -> /org/bluez/hci0/dev_2C_BC_BB_4C_2E_26
+            addr_path = address.upper().replace(":", "_")
+            device_path = f"/org/bluez/hci0/dev_{addr_path}"
+            
+            introspection = await self.bus.introspect('org.bluez', '/org/bluez/hci0')
+            adapter_obj = self.bus.get_proxy_object('org.bluez', '/org/bluez/hci0', introspection)
+            adapter = adapter_obj.get_interface('org.bluez.Adapter1')
+            
+            await adapter.call_remove_device(device_path)
+            log.info(f"[{address}] Removed device from BlueZ to clear stale pairing")
+        except Exception as e:
+            # Device might not exist or already be unpaired - that's fine
+            log.debug(f"[{address}] Could not remove BlueZ device (may not exist): {e}")
+
     async def connect_to_device(self, address: str) -> BLEPeripheral:
         if address in self.peripherals:
             existing = self.peripherals[address]
@@ -489,6 +537,18 @@ class BLEConnectionManager:
 
         # Clear any stale pairing state before starting a fresh connection
         self.clear_pairing_request(address)
+        
+        # Remove any stale BlueZ bonds that might cause auth issues
+        await self.remove_bluez_device(address)
+        
+        # Small delay after removing device to let BlueZ settle
+        await asyncio.sleep(0.5)
+        
+        # Re-scan to get a fresh device handle after removal
+        await self.scan_for_devices()
+        device = self._last_scan_devices.get(address)
+        if not device:
+            raise ValueError(f"Device {address} not found after rescan. Ensure the device is powered on and in range.")
         
         # Prepare state event for this connection
         self.get_state_event(address)  # Ensure event exists
@@ -580,6 +640,13 @@ async def connect_device(address: str):
             current_status = conn.status
             has_pending_request = addr in _global_manager.pending_pairing_requests
             
+            # If pairing failed, report immediately
+            if current_status == "pairing_failed":
+                return JSONResponse(
+                    status_code=400,
+                    content={"status": "pairing_failed", "address": addr, "detail": "Pairing failed - incorrect PIN or device rejected"}
+                )
+            
             # If connection failed, report error immediately
             if current_status == "error":
                 raise HTTPException(status_code=500, detail="Connection failed during pairing")
@@ -640,10 +707,15 @@ async def pair_device(address: str, payload: dict):
     while time.time() < timeout_end:
         if conn.status == "connected":
             return JSONResponse(content={"status": "paired", "address": addr})
-        elif conn.status == "error":
+        elif conn.status == "pairing_failed":
             return JSONResponse(
                 status_code=400,
                 content={"status": "pairing_failed", "address": addr, "detail": "Incorrect PIN or pairing rejected"}
+            )
+        elif conn.status == "error":
+            return JSONResponse(
+                status_code=400,
+                content={"status": "pairing_failed", "address": addr, "detail": "Connection error during pairing"}
             )
         elif conn.status == "disconnected":
             return JSONResponse(
