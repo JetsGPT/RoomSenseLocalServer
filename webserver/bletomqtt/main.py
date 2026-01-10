@@ -49,6 +49,44 @@ MQTT_TLS_INSECURE = os.getenv("MQTT_TLS_INSECURE", "false").lower() == "true"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 log = logging.getLogger("ble_gateway")
 
+# ================================================================
+# Helper: Read Docker Swarm Secrets
+# ================================================================
+SECRETS_DIR = "/run/secrets"
+
+def read_docker_secret(secret_name: str) -> Optional[str]:
+    """Read a secret from Docker Swarm secrets directory."""
+    secret_path = os.path.join(SECRETS_DIR, secret_name)
+    try:
+        if os.path.exists(secret_path):
+            with open(secret_path, 'r') as f:
+                # Strip whitespace/newlines like the Node.js version does
+                return f.read().strip()
+    except Exception as e:
+        log.warning(f"Could not read secret {secret_name}: {e}")
+    return None
+
+def get_config_value(env_var: str, secret_name: str, default: Optional[str] = None, required: bool = False) -> Optional[str]:
+    """Get config value from env var first, then Docker secret, then default.
+    
+    If required=True and no value found, raises an error (matching Node.js loadSecrets.js behavior).
+    """
+    # Priority: env var > Docker secret > default
+    value = os.getenv(env_var)
+    if value:
+        log.info(f"{env_var} loaded from environment variable")
+        return value
+    value = read_docker_secret(secret_name)
+    if value:
+        log.info(f"{env_var} loaded from Docker secret")
+        return value
+    if default is not None:
+        return default
+    if required:
+        # Match Node.js behavior: throw error if secret not found
+        raise RuntimeError(f"CRITICAL: {env_var} not found in secrets (Docker Swarm) and not set in environment. Secret file: {secret_name}")
+    return None
+
 # MAC Address validation regex
 MAC_ADDRESS_REGEX = re.compile(r'^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$')
 
@@ -509,16 +547,13 @@ app = FastAPI(title="BLE Gateway API", lifespan=lifespan)
 from fastapi.security import APIKeyHeader
 from fastapi import Security, Depends
 
-# API Key from environment variable
-API_KEY = os.getenv("BLE_GATEWAY_API_KEY")
+# API Key from Docker secret or environment variable (REQUIRED)
+API_KEY = get_config_value("BLE_GATEWAY_API_KEY", "ble_gateway_api_key", required=True)
 API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=True)
 
 async def get_api_key(api_key_header: str = Security(api_key_header)):
-    """Validate API key against environment variable."""
-    if not API_KEY:
-        log.warning("BLE_GATEWAY_API_KEY not set - API key validation disabled")
-        return api_key_header
+    """Validate API key against configured value."""
     if api_key_header != API_KEY:
         raise HTTPException(status_code=403, detail="Invalid API key")
     return api_key_header
@@ -587,7 +622,7 @@ async def pair_device(address: str, payload: dict):
     addr = normalize_mac_address(address)
     
     pin = payload.get("pin")
-    if not pin:
+    if pin is None:
         raise HTTPException(status_code=400, detail="PIN is required")
     
     success = _global_manager.submit_pin(addr, str(pin))

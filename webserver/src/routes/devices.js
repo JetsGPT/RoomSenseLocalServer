@@ -52,6 +52,8 @@ async function proxyToGateway(res, url, options, timeout = REQUEST_TIMEOUT_MS) {
 
             // Re-map Python status codes to appropriate Express status codes
             switch (response.status) {
+                case 400:
+                    return res.status(400).json({ error: 'Bad Request', detail });
                 case 404:
                     return res.status(404).json({ error: 'Not Found', detail });
                 case 503:
@@ -125,6 +127,7 @@ router.get('/scan', authMiddleware, async (req, res) => {
             let detail = 'No details provided';
             try { detail = JSON.parse(errorText).detail || detail; } catch (e) { }
 
+            if (response.status === 400) return res.status(400).json({ error: 'Bad Request', detail });
             if (response.status === 503) return res.status(503).json({ error: 'BLE bridge service unavailable', detail });
             if (response.status === 504) return res.status(504).json({ error: 'BLE operation timed out', detail });
             return res.status(502).json({ error: 'BLE bridge returned an error', detail });
@@ -384,6 +387,8 @@ router.post('/connect/:address', authMiddleware, async (req, res) => {
             const detail = errorJson.detail || 'No details provided';
 
             switch (response.status) {
+                case 400:
+                    return res.status(400).json({ error: 'Bad Request', detail });
                 case 404:
                     return res.status(404).json({ error: 'Not Found', detail });
                 case 503:
@@ -529,6 +534,8 @@ router.post('/disconnect/:address', authMiddleware, async (req, res) => {
             const detail = errorJson.detail || 'No details provided';
 
             switch (response.status) {
+                case 400:
+                    return res.status(400).json({ error: 'Bad Request', detail });
                 case 404:
                     return res.status(404).json({ error: 'Not Found', detail });
                 case 503:
