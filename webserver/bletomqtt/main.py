@@ -2,11 +2,10 @@
 import sys
 import asyncio
 import logging
-import struct
 import json
 import time
 import os
-import signal
+import re
 from typing import Dict, Optional, List
 
 # ---- Windows event loop for Bleak ----
@@ -49,6 +48,18 @@ MQTT_TLS_INSECURE = os.getenv("MQTT_TLS_INSECURE", "false").lower() == "true"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 log = logging.getLogger("ble_gateway")
+
+# MAC Address validation regex
+MAC_ADDRESS_REGEX = re.compile(r'^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$')
+
+def normalize_mac_address(address: str) -> str:
+    """Normalize MAC address to uppercase with colons."""
+    # Replace dashes with colons and uppercase
+    return address.upper().replace('-', ':')
+
+def validate_mac_address(address: str) -> bool:
+    """Validate MAC address format."""
+    return bool(MAC_ADDRESS_REGEX.match(address))
 
 # ================================================================
 # BlueZ Agent Implementation (For Passkey Pairing)
@@ -93,19 +104,28 @@ class BlueZAgent(ServiceInterface):
         self.manager.register_pairing_request(address, pin_future)
         
         try:
-            # Wait up to 60 seconds for user input
+            # Wait up to 25 seconds for user input (5s shorter than ESP32's 30s timer for safety margin)
             log.info(f"[Agent] Waiting for user input for device {address}...")
-            passkey_str = await asyncio.wait_for(pin_future, timeout=60.0)
+            
+            # Signal that we're waiting for PIN (wake up any polling endpoints)
+            self.manager.signal_state_change(address)
+            
+            passkey_str = await asyncio.wait_for(pin_future, timeout=25.0)
             passkey = int(passkey_str)
             log.info(f"[Agent] Returning passkey {passkey} for {address}")
             return passkey
         except asyncio.TimeoutError:
             log.error(f"[Agent] Timeout waiting for PIN for {address}")
-            self.manager.clear_pairing_request(address)
             raise Exception("Pairing timed out")
+        except asyncio.CancelledError:
+            log.warning(f"[Agent] Pairing cancelled for {address}")
+            raise Exception("Pairing cancelled")
         except Exception as e:
             log.error(f"[Agent] Error in RequestPasskey: {e}")
             raise
+        finally:
+            # ALWAYS clean up, even on success (the PIN was already submitted)
+            self.manager.clear_pairing_request(address)
 
     @method()
     def DisplayPasskey(self, device: 'o', passkey: 'u', entered: 'q'):
@@ -128,18 +148,25 @@ class BlueZAgent(ServiceInterface):
 
     @method()
     def Cancel(self):
-        log.info("[Agent] Cancel")
+        log.info("[Agent] Cancel - cleaning up all pending pairing requests")
+        # Clean up all pending pairing requests when BlueZ cancels
+        for addr in list(self.manager.pending_pairing_requests.keys()):
+            future = self.manager.pending_pairing_requests.get(addr)
+            if future and not future.done():
+                future.cancel()
+            self.manager.clear_pairing_request(addr)
 
 # ================================================================
 # BLEPeripheral Class
 # ================================================================
 class BLEPeripheral:
-    def __init__(self, device: BLEDevice, name: str, mqtt_client: aiomqtt.Client):
+    def __init__(self, device: BLEDevice, name: str, mqtt_client: aiomqtt.Client, manager=None):
         self.device = device
         self.address = device.address
         self.name = name or "unknown"
         self.client: Optional[BleakClient] = None
         self.mqtt = mqtt_client
+        self.manager = manager  # Reference to BLEConnectionManager for cleanup
         self._task: Optional[asyncio.Task] = None
         self._stopping = False
         self.box_address: Optional[str] = None
@@ -170,17 +197,23 @@ class BLEPeripheral:
             json_str = data.decode("utf-8").strip()
             parsed = json.loads(json_str)
             return parsed.get("type", sensor_type_hint or "unknown"), parsed.get("value")
-        except:
+        except Exception:
             # Fallback for simple binary/float data
             try:
                 val = float(data.decode().strip())
                 return sensor_type_hint or "unknown", val
-            except:
+            except Exception:
                 return None, None
 
     async def _on_notify(self, _handle: int, data: bytearray):
-        sensor_type = await self._get_sensor_type_from_descriptor()
-        sensor_type, value = self._parse_sensor_data(data, sensor_type_hint=sensor_type)
+        # 1. Try to parse from JSON first (FAST - ESP32 sends type in JSON)
+        sensor_type, value = self._parse_sensor_data(data)
+        
+        # 2. Only perform the slow network call if JSON didn't include the type
+        if sensor_type == "unknown" or sensor_type is None:
+            sensor_type_hint = await self._get_sensor_type_from_descriptor()  # SLOW
+            sensor_type, value = self._parse_sensor_data(data, sensor_type_hint=sensor_type_hint)
+
         if sensor_type is None or value is None: return
 
         payload = {
@@ -215,22 +248,34 @@ class BLEPeripheral:
                 def _on_disconnect(_client):
                     log.warning("[%s] Disconnected.", self.address)
                     self.status = "disconnected"
+                    if self.manager:
+                        self.manager.signal_state_change(self.address)
                 self.client.disconnected_callback = _on_disconnect
 
-                # Attempt to read protected metadata. This SHOULD trigger the pairing request.
                 try:
                     await self._read_metadata()
                 except Exception as e:
                     log.error("[%s] Pairing/Metadata failed: %s. Unpairing to clean state.", self.address, e)
                     try:
                         await self.client.unpair()
-                    except:
+                    except Exception:
                         pass
                     raise e
                 
                 # NOW we are truly ready and authenticated
                 self.status = "connected"
-                await self.client.start_notify(CUSTOM_SENSOR_CHAR_UUID, self._on_notify)
+                if self.manager:
+                    self.manager.signal_state_change(self.address)
+                
+                # Start notifications - handle failure
+                try:
+                    await self.client.start_notify(CUSTOM_SENSOR_CHAR_UUID, self._on_notify)
+                except Exception as e:
+                    log.error("[%s] Failed to start notifications: %s", self.address, e)
+                    self.status = "error"
+                    if self.manager:
+                        self.manager.signal_state_change(self.address)
+                    raise
                 
                 backoff = 1
                 while self.client.is_connected and not self._stopping:
@@ -238,16 +283,24 @@ class BLEPeripheral:
 
                 if self.client.is_connected:
                     try: await self.client.stop_notify(CUSTOM_SENSOR_CHAR_UUID)
-                    except: pass
+                    except Exception: pass
                 try: await self.client.disconnect()
-                except: pass
+                except Exception: pass
 
             except (BleakError, asyncio.TimeoutError) as e:
                 log.warning("[%s] BLE error: %s", self.address, e)
                 self.status = "error"
+                # Clean up any pending pairing request on failure
+                if self.manager:
+                    self.manager.clear_pairing_request(self.address)
+                    self.manager.signal_state_change(self.address)
             except Exception as e:
                 log.error("[%s] Unhandled exception: %s", self.address, e)
                 self.status = "error"
+                # Clean up any pending pairing request on failure
+                if self.manager:
+                    self.manager.clear_pairing_request(self.address)
+                    self.manager.signal_state_change(self.address)
 
             if self._stopping: break
             await asyncio.sleep(backoff)
@@ -260,10 +313,10 @@ class BLEPeripheral:
         self._stopping = True
         if self.client and self.client.is_connected:
             try: await self.client.disconnect()
-            except: pass
+            except Exception: pass
         if self._task:
             try: await asyncio.wait_for(self._task, timeout=5.0)
-            except: pass
+            except Exception: pass
 
 # ================================================================
 # BLE Connection Manager
@@ -278,6 +331,9 @@ class BLEConnectionManager:
         # Pairing logic
         self.pending_pairing_requests: Dict[str, asyncio.Future] = {}
         self.bus: Optional[MessageBus] = None
+        
+        # Event-based signaling for immediate state change notification
+        self._state_change_events: Dict[str, asyncio.Event] = {}
 
     async def setup_agent(self):
         """Register the BlueZ Agent on the System Bus."""
@@ -297,8 +353,14 @@ class BLEConnectionManager:
             agent_manager = obj.get_interface('org.bluez.AgentManager1')
             
             await agent_manager.call_register_agent(AGENT_PATH, "KeyboardDisplay")
-            await agent_manager.call_request_default_agent(AGENT_PATH)
-            log.info("BlueZ Agent registered successfully.")
+            
+            # Try to become the default agent, but handle failure gracefully
+            try:
+                await agent_manager.call_request_default_agent(AGENT_PATH)
+                log.info("BlueZ Agent registered as default successfully.")
+            except Exception as default_err:
+                log.warning(f"Could not become default agent (another BT manager may be running): {default_err}")
+                log.warning("Pairing requests may be routed to the system's Bluetooth manager instead of this API.")
             
         except Exception as e:
             log.error(f"Failed to register BlueZ agent: {e}")
@@ -308,11 +370,15 @@ class BLEConnectionManager:
         addr = address.upper()
         log.info(f"Registering pairing request for {addr}")
         self.pending_pairing_requests[addr] = future
+        # Signal state change for any waiting endpoints
+        self.signal_state_change(addr)
 
     def clear_pairing_request(self, address: str):
         addr = address.upper()
         if addr in self.pending_pairing_requests:
             del self.pending_pairing_requests[addr]
+        # Signal state change for any waiting endpoints
+        self.signal_state_change(addr)
 
     def submit_pin(self, address: str, pin: str):
         addr = address.upper()
@@ -320,15 +386,36 @@ class BLEConnectionManager:
             future = self.pending_pairing_requests[addr]
             if not future.done():
                 future.set_result(pin)
+                # Signal state change
+                self.signal_state_change(addr)
                 return True
         return False
+    
+    def get_state_event(self, address: str) -> asyncio.Event:
+        """Get or create an event for state change signaling."""
+        addr = address.upper()
+        if addr not in self._state_change_events:
+            self._state_change_events[addr] = asyncio.Event()
+        return self._state_change_events[addr]
+    
+    def signal_state_change(self, address: str):
+        """Signal that the state for a device has changed."""
+        addr = address.upper()
+        if addr in self._state_change_events:
+            self._state_change_events[addr].set()
+    
+    def clear_state_event(self, address: str):
+        """Clear and reset the state event for next wait cycle."""
+        addr = address.upper()
+        if addr in self._state_change_events:
+            self._state_change_events[addr].clear()
 
     async def scan_for_devices(self) -> List[dict]:
         async with self._scan_lock:
             log.info("Scanning...")
             scanner = BleakScanner(scanning_mode="active")
             await scanner.start()
-            await asyncio.sleep(SCAN_DURATION) # Increased to 10s to ensure name resolution
+            await asyncio.sleep(SCAN_DURATION)  # 8 seconds scan duration
             await scanner.stop()
             
             self._last_scan_devices.clear()
@@ -343,25 +430,45 @@ class BLEConnectionManager:
 
     async def connect_to_device(self, address: str) -> BLEPeripheral:
         if address in self.peripherals:
-            return self.peripherals[address]
+            existing = self.peripherals[address]
+            # If already connected, return as-is
+            if existing.status == "connected":
+                return existing
+            # Otherwise, stop and remove the stale peripheral to start fresh
+            log.info("[%s] Removing stale peripheral (status=%s) before reconnection", address, existing.status)
+            await existing.stop()
+            del self.peripherals[address]
         
-        # Check if we have the device object
+        # Check if we have the device object from a recent scan
         device = self._last_scan_devices.get(address)
         if not device:
-            # Fallback: try to create a device object if not in scan
-            device = BLEDevice(address, name="Unknown")
+            # Device not in cache - trigger a quick scan to find it
+            log.info(f"[{address}] Not in scan cache, performing quick scan...")
+            await self.scan_for_devices()
+            device = self._last_scan_devices.get(address)
+            if not device:
+                raise ValueError(f"Device {address} not found after scan. Ensure the device is powered on and in range.")
 
         # Clear any stale pairing state before starting a fresh connection
         self.clear_pairing_request(address)
+        
+        # Prepare state event for this connection
+        self.get_state_event(address)  # Ensure event exists
+        self.clear_state_event(address)  # Reset it
 
-        conn = BLEPeripheral(device, device.name, self.mqtt_client)
+        conn = BLEPeripheral(device, device.name, self.mqtt_client, manager=self)
         self.peripherals[address] = conn
         conn.start()
         return conn
 
     async def disconnect_from_device(self, address: str):
-        conn = self.peripherals.pop(address, None)
-        if conn: await conn.stop()
+        addr = normalize_mac_address(address)
+        conn = self.peripherals.pop(addr, None)
+        if conn: 
+            await conn.stop()
+        # Clean up state events to prevent memory leak
+        if addr in self._state_change_events:
+            del self._state_change_events[addr]
 
     async def stop_all_peripherals(self):
         for addr in list(self.peripherals.keys()):
@@ -402,11 +509,18 @@ app = FastAPI(title="BLE Gateway API", lifespan=lifespan)
 from fastapi.security import APIKeyHeader
 from fastapi import Security, Depends
 
+# API Key from environment variable
+API_KEY = os.getenv("BLE_GATEWAY_API_KEY")
 API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=True)
 
 async def get_api_key(api_key_header: str = Security(api_key_header)):
-    # (Existing Security Logic)
+    """Validate API key against environment variable."""
+    if not API_KEY:
+        log.warning("BLE_GATEWAY_API_KEY not set - API key validation disabled")
+        return api_key_header
+    if api_key_header != API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid API key")
     return api_key_header
 
 @app.get("/scan", dependencies=[Depends(get_api_key)])
@@ -415,41 +529,111 @@ async def scan_devices():
 
 @app.post("/connect/{address}", dependencies=[Depends(get_api_key)])
 async def connect_device(address: str):
+    # Validate and normalize MAC address
+    if not validate_mac_address(address):
+        raise HTTPException(status_code=400, detail=f"Invalid MAC address format: {address}")
+    addr = normalize_mac_address(address)
+    
     try:
-        conn = await _global_manager.connect_to_device(address)
+        conn = await _global_manager.connect_to_device(addr)
+        state_event = _global_manager.get_state_event(addr)
         
-        # Poll for up to 30 seconds to check if we hit the pairing state
-        for _ in range(60): 
-            await asyncio.sleep(0.5)
+        # Poll for up to 30 seconds using event-based waiting for immediate response
+        timeout_end = time.time() + 30.0
+        while time.time() < timeout_end:
+            # Check current status - order matters to avoid race conditions
+            current_status = conn.status
+            has_pending_request = addr in _global_manager.pending_pairing_requests
+            
+            # If connection failed, report error immediately
+            if current_status == "error":
+                raise HTTPException(status_code=500, detail="Connection failed during pairing")
+            
             # Check if this address is waiting for a PIN
-            if address.upper() in _global_manager.pending_pairing_requests:
-                return JSONResponse(content={"status": "pin_required", "address": address})
-            if conn.status == "connected":
-                return JSONResponse(content={"status": "connected", "address": address})
+            if has_pending_request:
+                return JSONResponse(content={"status": "pin_required", "address": addr})
+            
+            # Authenticated means PIN was submitted, waiting for result
+            if current_status == "authenticating" and not has_pending_request:
+                # PIN was submitted, continue polling for final result
+                pass
+            elif current_status == "connected":
+                return JSONResponse(content={"status": "connected", "address": addr})
+            
+            # Wait for state change event or timeout after 500ms
+            try:
+                await asyncio.wait_for(state_event.wait(), timeout=0.5)
+            except asyncio.TimeoutError:
+                pass  # Continue polling
+            finally:
+                _global_manager.clear_state_event(addr)  # Clear AFTER wait to avoid race
         
-        # If still connecting but no PIN asked yet, just say connecting
-        return JSONResponse(content={"status": "connecting", "address": address})
+        # If still connecting but no PIN asked yet, timeout with status
+        return JSONResponse(content={"status": "timeout", "address": addr, "last_status": conn.status})
         
+    except HTTPException:
+        raise  # Re-raise HTTPException as-is
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/pair/{address}", dependencies=[Depends(get_api_key)])
 async def pair_device(address: str, payload: dict):
-    """New endpoint to submit the PIN."""
+    """Submit the PIN and poll for pairing result."""
+    # Validate and normalize MAC address
+    if not validate_mac_address(address):
+        raise HTTPException(status_code=400, detail=f"Invalid MAC address format: {address}")
+    addr = normalize_mac_address(address)
+    
     pin = payload.get("pin")
     if not pin:
         raise HTTPException(status_code=400, detail="PIN is required")
     
-    success = _global_manager.submit_pin(address, str(pin))
-    if success:
-        return JSONResponse(content={"status": "pin_submitted", "address": address})
-    else:
+    success = _global_manager.submit_pin(addr, str(pin))
+    if not success:
         raise HTTPException(status_code=404, detail="No pending pairing request for this device")
+    
+    # Poll for up to 10 seconds for the pairing result using event-based waiting
+    conn = _global_manager.peripherals.get(addr)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Device connection not found")
+    
+    state_event = _global_manager.get_state_event(addr)
+    timeout_end = time.time() + 10.0
+    
+    while time.time() < timeout_end:
+        if conn.status == "connected":
+            return JSONResponse(content={"status": "paired", "address": addr})
+        elif conn.status == "error":
+            return JSONResponse(
+                status_code=400,
+                content={"status": "pairing_failed", "address": addr, "detail": "Incorrect PIN or pairing rejected"}
+            )
+        elif conn.status == "disconnected":
+            return JSONResponse(
+                status_code=400,
+                content={"status": "pairing_failed", "address": addr, "detail": "Device disconnected during pairing"}
+            )
+        
+        # Wait for state change event or timeout after 500ms
+        try:
+            await asyncio.wait_for(state_event.wait(), timeout=0.5)
+        except asyncio.TimeoutError:
+            pass  # Continue polling
+        finally:
+            _global_manager.clear_state_event(addr)  # Clear AFTER wait to avoid race
+    
+    # Timeout - pairing result unknown
+    return JSONResponse(content={"status": "pairing_timeout", "address": addr, "last_status": conn.status})
 
 @app.post("/disconnect/{address}", dependencies=[Depends(get_api_key)])
 async def disconnect_device(address: str):
-    await _global_manager.disconnect_from_device(address)
-    return JSONResponse(content={"status": "disconnected", "address": address})
+    if not validate_mac_address(address):
+        raise HTTPException(status_code=400, detail=f"Invalid MAC address format: {address}")
+    addr = normalize_mac_address(address)
+    await _global_manager.disconnect_from_device(addr)
+    return JSONResponse(content={"status": "disconnected", "address": addr})
 
 @app.get("/connections", dependencies=[Depends(get_api_key)])
 async def get_connections():
@@ -463,4 +647,4 @@ async def health():
     return {"status": "ok"}
 
 if __name__ == "__main__":
-    asyncio.run(uvicorn.run(app, host="0.0.0.0", port=8080))
+    uvicorn.run(app, host="0.0.0.0", port=8080)
