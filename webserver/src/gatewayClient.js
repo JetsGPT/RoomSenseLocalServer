@@ -17,17 +17,40 @@ function getIdentity() {
     if (fs.existsSync(IDENTITY_FILE)) {
         try {
             const data = JSON.parse(fs.readFileSync(IDENTITY_FILE, 'utf8'));
-            return data.server_id;
+            return {
+                box_id: data.server_id || data.box_id || null,
+                password: data.password || data.claim_password || null
+            };
         } catch (e) {
-            console.error("Failed to read identity file:", e);
+            console.error("[Gateway] Failed to read identity file:", e);
         }
     }
-    return null;
+    return { box_id: null, password: null };
 }
 
-function saveIdentity(id) {
-    fs.writeFileSync(IDENTITY_FILE, JSON.stringify({ server_id: id }, null, 2));
-    console.log(`[Gateway] 🆔 Assigned new Identity: ${id}`);
+function saveIdentity(boxId, claimPassword = null) {
+    let existing = {};
+    if (fs.existsSync(IDENTITY_FILE)) {
+        try {
+            existing = JSON.parse(fs.readFileSync(IDENTITY_FILE, 'utf8'));
+        } catch (e) {
+            console.error("[Gateway] Failed to read existing identity file:", e);
+        }
+    }
+
+    const toSave = {
+        ...existing,
+        server_id: boxId,
+        box_id: boxId
+    };
+
+    if (claimPassword) {
+        toSave.claim_password = claimPassword;
+        toSave.password = claimPassword;
+    }
+
+    fs.writeFileSync(IDENTITY_FILE, JSON.stringify(toSave, null, 2));
+    console.log(`[Gateway] 🆔 Identity saved: ${boxId}${claimPassword ? ' (with claim password)' : ''}`);
 }
 
 export function startGatewayClient() {
@@ -38,12 +61,13 @@ export function startGatewayClient() {
     });
 
     ws.on('open', () => {
-        const myId = getIdentity();
-        console.log(`[Gateway] Connected. Identifying as: ${myId || 'New Server'}`);
+        const identity = getIdentity();
+        console.log(`[Gateway] Connected. Identifying as: ${identity.box_id || 'New Server'}`);
 
         ws.send(JSON.stringify({
             type: 'IDENTIFY',
-            box_id: myId
+            box_id: identity.box_id,
+            password: identity.password
         }));
     });
 
@@ -53,8 +77,22 @@ export function startGatewayClient() {
             msg = JSON.parse(data);
         } catch (e) { return; }
 
+        if (msg.type === 'REGISTERED') {
+            const boxId = msg.payload?.box_id;
+            const claimPassword = msg.payload?.claim_password;
+            if (boxId) {
+                saveIdentity(boxId, claimPassword);
+                console.log(`[Gateway] ✅ Registered as: ${boxId}${claimPassword ? ' (claim password received)' : ''}`);
+            }
+            return;
+        }
+
         if (msg.type === 'PROVISION') {
-            saveIdentity(msg.payload.server_id);
+            const boxId = msg.payload?.box_id;
+            if (boxId) {
+                saveIdentity(boxId);
+                console.log(`[Gateway] ✅ Provisioned as: ${boxId}`);
+            }
             return;
         }
 
