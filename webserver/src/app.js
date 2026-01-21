@@ -88,6 +88,7 @@ import userRouter from './routes/users.js';
 import sensorRouter from './routes/sensors/index.js';
 import testingRouter from './routes/testing.js';
 import deviceRouter, { initDatabasePool, restorePersistedConnections } from './routes/devices.js';
+import floorPlansRouter, { initDatabasePool as initFloorPlansPool } from './routes/floorPlans.js';
 import { startGatewayClient } from "./gatewayClient.js";
 app.use(express.json());
 // Make pool available to middlewares
@@ -210,12 +211,14 @@ app.get('/api/health', (req, res) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Initialize database pool for device router
+// Initialize database pool for device router and floor plans router
 initDatabasePool(pool);
+initFloorPlansPool(pool);
 
 app.use('/api/users', userRouter);
 app.use('/api/sensors', sensorRouter);
 app.use('/api/devices', deviceRouter);
+app.use('/api/floor-plans', floorPlansRouter);
 if (process.env.NODE_ENV === 'development') {
     app.use('/testing', testingRouter);
     console.log('⚠️  Testing routes enabled (development mode only)');

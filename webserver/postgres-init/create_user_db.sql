@@ -127,6 +127,15 @@ INSERT INTO public.permissions(role, method, path_pattern, match_type, allow)
 VALUES ('user','GET','/api/users/me','exact', true)
 ON CONFLICT (role, method, path_pattern, match_type) DO NOTHING;
 
+-- User: allow floor-plans API with reasonable limits (auto-save every 2s requires higher limits)
+INSERT INTO public.permissions(role, method, path_pattern, match_type, allow, rate_limit_max, rate_limit_window_ms)
+VALUES
+('user','GET','/api/floor-plans','prefix', true, 60, 60000),
+('user','POST','/api/floor-plans','prefix', true, 60, 60000),
+('user','PUT','/api/floor-plans','prefix', true, 120, 60000),
+('user','DELETE','/api/floor-plans','prefix', true, 30, 60000)
+ON CONFLICT (role, method, path_pattern, match_type) DO NOTHING;
+
 -- Admin: full access, no rate limits
 INSERT INTO public.permissions(role, method, path_pattern, match_type, allow, rate_limit_max, rate_limit_window_ms)
 VALUES ('admin','*','/','prefix', true, 0, 0)
@@ -182,6 +191,28 @@ ALTER TABLE "session" ADD CONSTRAINT "session_pkey" PRIMARY KEY ("sid") NOT DEFE
 CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");
 
 -- ----------------------------
+-- Floor Plans Table
+-- ----------------------------
+CREATE TABLE IF NOT EXISTS public.floor_plans (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL DEFAULT 'Untitled Floor Plan',
+    floors JSONB NOT NULL DEFAULT '[]',
+    view_settings JSONB DEFAULT '{"zoom": 1, "panX": 0, "panY": 0}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_floor_plans_user_id ON public.floor_plans(user_id);
+
+-- Trigger to automatically update updated_at
+DROP TRIGGER IF EXISTS trg_floor_plans_updated_at ON public.floor_plans;
+CREATE TRIGGER trg_floor_plans_updated_at
+BEFORE UPDATE ON public.floor_plans
+FOR EACH ROW
+EXECUTE FUNCTION update_ble_connections_updated_at();
+
+-- ----------------------------
 -- Grant Permissions to web_app
 -- ----------------------------
 -- Grant usage on sequences (important for SERIAL columns)
@@ -192,4 +223,5 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON public.users TO web_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.roles TO web_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.permissions TO web_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.ble_connections TO web_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.floor_plans TO web_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public."session" TO web_app;
