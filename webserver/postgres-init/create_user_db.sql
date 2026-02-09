@@ -199,11 +199,14 @@ CREATE TABLE IF NOT EXISTS public.floor_plans (
     name VARCHAR(255) NOT NULL DEFAULT 'Untitled Floor Plan',
     floors JSONB NOT NULL DEFAULT '[]',
     view_settings JSONB DEFAULT '{"zoom": 1, "panX": 0, "panY": 0}',
+    is_active BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_floor_plans_user_id ON public.floor_plans(user_id);
+-- Ensure only one floor plan is active per user
+CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_floor_plan ON public.floor_plans (user_id) WHERE (is_active = true);
 
 -- Trigger to automatically update updated_at
 DROP TRIGGER IF EXISTS trg_floor_plans_updated_at ON public.floor_plans;

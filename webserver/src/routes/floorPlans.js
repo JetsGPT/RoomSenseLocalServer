@@ -39,6 +39,7 @@ function formatFloorPlan(row) {
         name: row.name,
         floors: row.floors,
         viewSettings: row.view_settings,
+        isActive: row.is_active,
         createdAt: row.created_at,
         updatedAt: row.updated_at
     };
@@ -99,7 +100,7 @@ router.get('/:id', async (req, res) => {
  */
 router.post('/', async (req, res) => {
     const userId = req.session.user.id;
-    const { name, floors, viewSettings } = req.body;
+    const { name, floors, viewSettings, isActive } = req.body;
 
     // Validate required fields
     if (!name || typeof name !== 'string') {
@@ -107,15 +108,26 @@ router.post('/', async (req, res) => {
     }
 
     try {
+        // If this plan is set to be active, deactivate all others for this user first
+        // We do this in a transaction-like manner (though not strict transaction here for simplicity, 
+        // the unique index will prevent multiple active plans anyway)
+        if (isActive === true) {
+            await pool.query(
+                'UPDATE floor_plans SET is_active = false WHERE user_id = $1',
+                [userId]
+            );
+        }
+
         const result = await pool.query(
-            `INSERT INTO floor_plans (user_id, name, floors, view_settings)
-             VALUES ($1, $2, $3, $4)
+            `INSERT INTO floor_plans (user_id, name, floors, view_settings, is_active)
+             VALUES ($1, $2, $3, $4, $5)
              RETURNING *`,
             [
                 userId,
                 name.trim(),
                 JSON.stringify(floors || []),
-                JSON.stringify(viewSettings || { zoom: 1, panX: 0, panY: 0 })
+                JSON.stringify(viewSettings || { zoom: 1, panX: 0, panY: 0 }),
+                isActive === true // Ensure boolean
             ]
         );
 
@@ -137,13 +149,21 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     const { id } = req.params;
     const userId = req.session.user.id;
-    const { name, floors, viewSettings } = req.body;
+    const { name, floors, viewSettings, isActive } = req.body;
 
     try {
         // Verify ownership first
         const existing = await getFloorPlanIfOwned(id, userId);
         if (!existing) {
             return res.status(404).json({ error: 'Floor plan not found', status: 404 });
+        }
+
+        // If setting to active, deactivate all others first
+        if (isActive === true) {
+            await pool.query(
+                'UPDATE floor_plans SET is_active = false WHERE user_id = $1',
+                [userId]
+            );
         }
 
         // Build dynamic update query for partial updates
@@ -162,6 +182,10 @@ router.put('/:id', async (req, res) => {
         if (viewSettings !== undefined) {
             updates.push(`view_settings = $${paramIndex++}`);
             values.push(JSON.stringify(viewSettings));
+        }
+        if (isActive !== undefined) {
+            updates.push(`is_active = $${paramIndex++}`);
+            values.push(isActive === true);
         }
 
         if (updates.length === 0) {
@@ -270,9 +294,9 @@ router.post('/:floorPlanId/sensors', async (req, res) => {
 
     // Validate required fields
     if (!floorId || !sensorBoxId || !position) {
-        return res.status(400).json({ 
-            error: 'Missing required fields: floorId, sensorBoxId, position', 
-            status: 400 
+        return res.status(400).json({
+            error: 'Missing required fields: floorId, sensorBoxId, position',
+            status: 400
         });
     }
 
