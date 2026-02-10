@@ -208,6 +208,81 @@ router.get('/data/type/:sensor_type', requireLogin, (req, res) => {
 });
 
 /**
+ * GET /api/sensors/data/aggregated/:sensor_box/:sensor_type
+ * Get aggregated sensor data (e.g. daily mean) for heatmaps
+ */
+router.get('/data/aggregated/:sensor_box/:sensor_type', requireLogin, async (req, res) => {
+    const { sensor_box, sensor_type } = req.params;
+    const { start_time, end_time, aggregation } = req.query;
+
+    // Validate required path param
+    const sanitizedBox = sanitizeSensorBox(sensor_box);
+    const sanitizedType = sanitizeSensorType(sensor_type);
+
+    if (!sanitizedBox || !sanitizedType) {
+        return res.status(400).json({ error: 'Invalid sensor_box or sensor_type format' });
+    }
+
+    const sanitizedStart = sanitizeFluxTime(start_time, '-365d'); // Default to 1 year
+    const sanitizedEnd = sanitizeFluxTime(end_time, 'now()');
+
+    // Whitelist aggregation function
+    const validAggregations = ['mean', 'min', 'max', 'sum', 'count'];
+    const sanitizedAggregation = validAggregations.includes(aggregation) ? aggregation : 'mean';
+
+    // Resolve aliases
+    let technicalName = sanitizedBox;
+    const pool = req.app.locals.pool;
+    if (pool) {
+        try {
+            const result = await pool.query(
+                'SELECT name FROM ble_connections WHERE display_name = $1',
+                [sanitizedBox]
+            );
+            if (result.rows.length > 0 && result.rows[0].name) {
+                technicalName = result.rows[0].name;
+            }
+        } catch (e) { console.error('Error resolving alias', e); }
+    }
+
+    console.log(`Getting aggregated (${sanitizedAggregation}) data for ${technicalName}:${sanitizedType}`);
+
+    const escapedBucket = bucket.replace(/"/g, '\\"');
+    const escapedBox = technicalName.replace(/"/g, '\\"');
+    const escapedType = sanitizedType.replace(/"/g, '\\"');
+
+    // Flux query with daily window
+    const fluxQuery = `from(bucket: "${escapedBucket}")
+  |> range(start: ${sanitizedStart}, stop: ${sanitizedEnd})
+  |> filter(fn: (r) => r._measurement == "sensor_data")
+  |> filter(fn: (r) => r.sensor_box == "${escapedBox}")
+  |> filter(fn: (r) => r.sensor_type == "${escapedType}")
+  |> aggregateWindow(every: 1d, fn: ${sanitizedAggregation}, createEmpty: false)
+  |> yield(name: "${sanitizedAggregation}")`;
+
+    const data = [];
+    const queryClient = influxClient.getQueryApi(organisation);
+
+    queryClient.queryRows(fluxQuery, {
+        next: (row, tableMeta) => {
+            const o = tableMeta.toObject(row);
+            // Format specifically for frontend graph expectation { date, value }
+            data.push({
+                date: o._time,
+                value: o._value
+            });
+        },
+        error: (error) => {
+            console.error('Aggregation query failed:', error);
+            res.status(500).json({ error: 'Failed to fetch aggregated data' });
+        },
+        complete: () => {
+            res.json(data);
+        }
+    });
+});
+
+/**
  * GET /api/sensors/boxes
  * Get unique sensor boxes
  */
