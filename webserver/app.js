@@ -1,15 +1,12 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import session from "express-session";
 import pg from "pg";
 import connectPgSimple from "connect-pg-simple";
-import dotenv from "dotenv";
 import https from 'https';
 import fs from 'fs';
 import ratePermissions from './middleware/ratePermissions.js';
-
-dotenv.config();
-
 
 // Session sachen
 
@@ -30,11 +27,18 @@ const pool = new Pool({
 
 
 const app = express();
-const PORT = 8081   ;
+const PORT = 8081;
+
+// SSL Certificate
+const httpsOptions = {
+    key: fs.readFileSync('./server.key'),
+    cert: fs.readFileSync('./server.cert')
+};
 
 import userRouter from './routes/users.js';
 import sensorRouter from './routes/sensors/index.js';
 import testingRouter from './routes/testing.js';
+import weatherRouter from './routes/weather.js';
 app.use(express.json());
 // Make pool available to middlewares
 app.locals.pool = pool;
@@ -47,7 +51,7 @@ app.use(cors({
     origin: function (origin, callback) {
         // Allow requests with no origin (like mobile apps or curl requests)
         if (!origin) return callback(null, true);
-        
+
         // Allow localhost, local network IPs, and your domain
         const allowedOrigins = [
             'http://localhost:5173',
@@ -65,7 +69,7 @@ app.use(cors({
             'ionic://localhost',
             'https://localhost',
         ];
-        
+
         const isAllowed = allowedOrigins.some(allowedOrigin => {
             if (typeof allowedOrigin === 'string') {
                 return origin === allowedOrigin;
@@ -74,7 +78,7 @@ app.use(cors({
             }
             return false;
         });
-        
+
         if (isAllowed) {
             callback(null, true);
         } else {
@@ -91,18 +95,17 @@ app.use(
     session({
         store: new PgSession({
             pool,
-            tableName: "session",createTableIfMissing: true, // wenn sie nicht existiert wird sie automatisch erstellt
-            pruneSessionInterval: 60*60
+            tableName: "session", createTableIfMissing: true, // wenn sie nicht existiert wird sie automatisch erstellt
+            pruneSessionInterval: 60 * 60
         }),
-        secret: process.env.SESSION_SECRET,
+        secret: process.env.SESSION_SECRET || 'dev_secret',
         resave: false,
         saveUninitialized: false,
         cookie: {
-            maxAge: 1000 * 60 * 60 * 2, 
-            secure: true,
+            maxAge: 1000 * 60 * 60 * 24 * 30, // 30 days
+            secure: true, // HTTPS required
             httpOnly: true,
-            sameSite: "none",  // Required for cross-origin requests
-            domain: undefined  // Let browser handle domain automatically
+            sameSite: "none" // Needed for cross-origin
         },
     })
 );
@@ -113,16 +116,20 @@ app.use(ratePermissions());
 
 
 
+// Debug middleware to log all requests
+app.use((req, res, next) => {
+    console.log(`[Request] ${req.method} ${req.url}`);
+    next();
+});
+
+
+
 app.use('/api/users', userRouter);
 app.use('/api/sensors', sensorRouter);
 app.use('/testing', testingRouter);
+app.use('/api/weather', weatherRouter);
 
 
-
-const httpsOptions = {
-    key: fs.readFileSync('./server.key'),
-    cert: fs.readFileSync('./server.cert'),
-};
 
 https.createServer(httpsOptions, app).listen(PORT, '0.0.0.0', () => {
     console.log(`✅ HTTPS Server running on https://0.0.0.0:${PORT}`);
@@ -133,9 +140,9 @@ https.createServer(httpsOptions, app).listen(PORT, '0.0.0.0', () => {
 
 // --- HTTP → HTTPS redirect ---
 //http.createServer((req, res) => {
- //   const host = req.headers['host']?.replace(/:\d+$/, ''); // remove port if present
+//   const host = req.headers['host']?.replace(/:\d+$/, ''); // remove port if present
 //    res.writeHead(301, { "Location": "https://" + host + req.url });
-  //  res.end();
+//  res.end();
 //}).listen(80, () => {
-   // console.log('ℹ️ HTTP Server redirecting to HTTPS on port 80');
+// console.log('ℹ️ HTTP Server redirecting to HTTPS on port 80');
 //});

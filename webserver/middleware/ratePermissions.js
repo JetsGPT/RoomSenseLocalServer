@@ -93,7 +93,7 @@ async function ensurePermissionsSchema(pool) {
 
       await client.query('COMMIT');
     } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
+      await client.query('ROLLBACK').catch(() => { });
       throw err;
     } finally {
       client.release();
@@ -152,6 +152,9 @@ function enforceCounter(key, limit, windowMs) {
 
 export default function ratePermissions() {
   return async function (req, res, next) {
+    if (process.env.DEMO_MODE === 'true') {
+      return next();
+    }
     try {
       if (trustProxy) req.app.set('trust proxy', 1);
       const pool = req.app?.locals?.pool;
