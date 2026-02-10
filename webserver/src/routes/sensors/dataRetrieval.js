@@ -1,6 +1,7 @@
 import express from 'express';
 import { requireLogin } from '../../auth/auth.js';
 import { influxClient, organisation, bucket } from './influxClient.js';
+import moldRiskService from '../../services/MoldRiskService.js';
 import {
     buildSecureFluxQuery,
     formatSensorData,
@@ -162,6 +163,45 @@ router.get('/data/box/:sensor_box', requireLogin, async (req, res) => {
     });
 
     executeQuery(fluxQuery, res, `Data retrieved for sensor box: ${technicalName}`);
+});
+
+/**
+ * GET /api/sensors/data/mold-risk/:sensor_box
+ * Get mold risk assessment for a sensor box
+ */
+router.get('/data/mold-risk/:sensor_box', requireLogin, async (req, res) => {
+    const { sensor_box } = req.params;
+
+    // Sanitize input
+    const sanitizedBox = sanitizeSensorBox(sensor_box);
+    if (!sanitizedBox) {
+        return res.status(400).json({ error: 'Invalid sensor_box format' });
+    }
+
+    // Resolve alias
+    let technicalName = sanitizedBox;
+    const pool = req.app.locals.pool;
+    if (pool) {
+        try {
+            const result = await pool.query(
+                'SELECT name FROM ble_connections WHERE display_name = $1',
+                [sanitizedBox]
+            );
+            if (result.rows.length > 0 && result.rows[0].name) {
+                technicalName = result.rows[0].name;
+            }
+        } catch (error) {
+            console.error('Error resolving alias:', error);
+        }
+    }
+
+    try {
+        const riskData = await moldRiskService.calculateMoldRisk(technicalName);
+        res.status(200).json(riskData);
+    } catch (error) {
+        console.error('Error getting mold risk:', error);
+        res.status(500).json({ error: 'Failed to calculate mold risk' });
+    }
 });
 
 /**
