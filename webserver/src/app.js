@@ -90,6 +90,8 @@ import testingRouter from './routes/testing.js';
 import deviceRouter, { initDatabasePool, restorePersistedConnections } from './routes/devices.js';
 import floorPlansRouter, { initDatabasePool as initFloorPlansPool } from './routes/floorPlans.js';
 import weatherRouter from './routes/weather.js';
+import notificationRouter from './routes/notifications.js';
+import ruleEngine from './services/notifications/RuleEngine.js';
 import { startGatewayClient } from "./gatewayClient.js";
 app.use(express.json());
 
@@ -217,12 +219,15 @@ app.get('/api/health', (req, res) => {
 initDatabasePool(pool);
 initFloorPlansPool(pool);
 
+// Initialize rule engine for notifications
+ruleEngine.initialize(pool);
+
 app.use('/api/users', userRouter);
 app.use('/api/sensors', sensorRouter);
 app.use('/api/devices', deviceRouter);
 app.use('/api/floor-plans', floorPlansRouter);
 app.use('/api/weather', weatherRouter);
-
+app.use('/api/notifications', notificationRouter);
 if (process.env.NODE_ENV === 'development') {
     app.use('/testing', testingRouter);
     console.log('⚠️  Testing routes enabled (development mode only)');
@@ -262,6 +267,9 @@ https.createServer(httpsOptions, app).listen(PORT, '0.0.0.0', async () => {
     console.log('-----------------------------------');
     console.log('🚀 Starting Remote Access Gateway...');
     startGatewayClient();
+    console.log('-----------------------------------');
+    console.log('🔔 Starting Notification Rule Engine...');
+    ruleEngine.start();
     console.log('-----------------------------------');
     // Restore persisted BLE connections after server starts
     // Wait a bit for the BLE gateway to be ready
