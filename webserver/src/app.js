@@ -89,8 +89,10 @@ import sensorRouter from './routes/sensors/index.js';
 import testingRouter from './routes/testing.js';
 import deviceRouter, { initDatabasePool, restorePersistedConnections } from './routes/devices.js';
 import floorPlansRouter, { initDatabasePool as initFloorPlansPool } from './routes/floorPlans.js';
+import weatherRouter from './routes/weather.js';
 import { startGatewayClient } from "./gatewayClient.js";
 app.use(express.json());
+
 // Make pool available to middlewares
 app.locals.pool = pool;
 
@@ -219,6 +221,8 @@ app.use('/api/users', userRouter);
 app.use('/api/sensors', sensorRouter);
 app.use('/api/devices', deviceRouter);
 app.use('/api/floor-plans', floorPlansRouter);
+app.use('/api/weather', weatherRouter);
+
 if (process.env.NODE_ENV === 'development') {
     app.use('/testing', testingRouter);
     console.log('⚠️  Testing routes enabled (development mode only)');
