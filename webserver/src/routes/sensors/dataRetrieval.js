@@ -460,4 +460,126 @@ router.get('/data/export/csv', requireLogin, (req, res) => {
     });
 });
 
+/**
+ * GET /api/sensors/health-status
+ * Get health status of all active devices and their sensors
+ */
+router.get('/health-status', requireLogin, async (req, res) => {
+    try {
+        const pool = req.app.locals.pool;
+        if (!pool) {
+            return res.status(503).json({ error: 'Database not available' });
+        }
+
+        // 1. Get active devices from Postgres
+        const dbResult = await pool.query(
+            'SELECT address, name, display_name, last_seen FROM ble_connections WHERE is_active = TRUE'
+        );
+        const activeDevices = dbResult.rows;
+
+        // 2. Get latest readings from InfluxDB (Last 24h)
+        const fluxQuery = `
+            from(bucket: "${bucket}")
+                |> range(start: -24h)
+                |> filter(fn: (r) => r["_measurement"] == "sensor_data")
+                |> group(columns: ["sensor_box", "sensor_type"])
+                |> last()
+                |> keep(columns: ["_time", "sensor_box", "sensor_type", "_value"])
+        `;
+
+        const latestReadings = {}; // Map: { box_name: { sensor_type: { time, value } } }
+        const queryClient = influxClient.getQueryApi(organisation);
+
+        await new Promise((resolve, reject) => {
+            queryClient.queryRows(fluxQuery, {
+                next: (row, tableMeta) => {
+                    const o = tableMeta.toObject(row);
+                    if (!o.sensor_box || !o.sensor_type) return;
+
+                    if (!latestReadings[o.sensor_box]) {
+                        latestReadings[o.sensor_box] = {};
+                    }
+                    latestReadings[o.sensor_box][o.sensor_type] = {
+                        timestamp: o._time,
+                        value: o._value
+                    };
+                },
+                error: (error) => {
+                    console.error('Error querying InfluxDB for health status:', error);
+                    reject(error);
+                },
+                complete: () => resolve()
+            });
+        });
+
+        // 3. Combine Data & Calculate Status
+        const healthStatus = activeDevices.map(device => {
+            // Technical name is the key for InfluxDB
+            const technicalName = device.name || device.address;
+            const sensorsData = latestReadings[technicalName] || {};
+
+            const now = Date.now();
+            const STALE_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour
+
+            // Map sensors to status objects
+            const sensors = Object.entries(sensorsData).map(([type, data]) => {
+                const lastSeen = new Date(data.timestamp).getTime();
+                const isStale = (now - lastSeen) > STALE_THRESHOLD_MS;
+                return {
+                    type,
+                    last_seen: data.timestamp,
+                    value: data.value,
+                    status: isStale ? 'stale' : 'online'
+                };
+            });
+
+            // Determine overall device status
+            // If no sensors found in last 24h, use DB last_seen (might be empty/old)
+            let deviceStatus = 'offline';
+            let deviceLastSeen = device.last_seen;
+
+            if (sensors.length > 0) {
+                // If we have recent Influx data, use the most recent sensor timestamp
+                const mostRecentSensor = sensors.reduce((latest, current) =>
+                    new Date(current.last_seen) > new Date(latest.last_seen) ? current : latest
+                    , sensors[0]);
+
+                deviceLastSeen = mostRecentSensor.last_seen;
+
+                // Device is online if at least one sensor is online, 
+                // or 'stale' if all are stale but visible in last 24h
+                const hasOnlineSensor = sensors.some(s => s.status === 'online');
+                deviceStatus = hasOnlineSensor ? 'online' : 'stale';
+            } else {
+                // No Influx data in 24h. Check DB last_seen.
+                if (device.last_seen) {
+                    const dbLastSeen = new Date(device.last_seen).getTime();
+                    if ((now - dbLastSeen) < STALE_THRESHOLD_MS) {
+                        deviceStatus = 'online'; // Should have Influx data then? Maybe gap.
+                    } else {
+                        deviceStatus = 'offline';
+                    }
+                } else {
+                    deviceStatus = 'offline'; // Never seen or very old
+                }
+            }
+
+            return {
+                address: device.address,
+                box_id: technicalName, // Technical ID
+                display_name: device.display_name || technicalName,
+                last_seen: deviceLastSeen,
+                status: deviceStatus,
+                sensors: sensors
+            };
+        });
+
+        res.status(200).json(healthStatus);
+
+    } catch (error) {
+        console.error('Error generating health status:', error);
+        res.status(500).json({ error: 'Failed to retrieve system health status' });
+    }
+});
+
 export default router;
