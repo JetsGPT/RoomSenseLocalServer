@@ -471,11 +471,23 @@ router.get('/health-status', requireLogin, async (req, res) => {
             return res.status(503).json({ error: 'Database not available' });
         }
 
+        if (!bucket || !organisation) {
+            console.error('[HealthStatus] InfluxDB configuration missing (bucket or org).');
+            return res.status(503).json({ error: 'InfluxDB configuration missing' });
+        }
+
         // 1. Get active devices from Postgres
+        console.log('[HealthStatus] Querying active devices from Postgres...');
         const dbResult = await pool.query(
             'SELECT address, name, display_name, last_seen FROM ble_connections WHERE is_active = TRUE'
         );
         const activeDevices = dbResult.rows;
+        console.log(`[HealthStatus] Found ${activeDevices.length} active devices.`);
+
+        if (activeDevices.length === 0) {
+            console.log('[HealthStatus] No active devices found. Returning empty list.');
+            return res.status(200).json([]);
+        }
 
         // 2. Get latest readings from InfluxDB (Last 24h)
         const fluxQuery = `
@@ -489,6 +501,8 @@ router.get('/health-status', requireLogin, async (req, res) => {
 
         const latestReadings = {}; // Map: { box_name: { sensor_type: { time, value } } }
         const queryClient = influxClient.getQueryApi(organisation);
+
+        console.log(`[HealthStatus] Querying InfluxDB bucket: ${bucket}, Org: ${organisation}`);
 
         await new Promise((resolve, reject) => {
             queryClient.queryRows(fluxQuery, {
@@ -505,10 +519,13 @@ router.get('/health-status', requireLogin, async (req, res) => {
                     };
                 },
                 error: (error) => {
-                    console.error('Error querying InfluxDB for health status:', error);
+                    console.error('[HealthStatus] Error querying InfluxDB:', error);
                     reject(error);
                 },
-                complete: () => resolve()
+                complete: () => {
+                    console.log('[HealthStatus] InfluxDB query complete.');
+                    resolve();
+                }
             });
         });
 
