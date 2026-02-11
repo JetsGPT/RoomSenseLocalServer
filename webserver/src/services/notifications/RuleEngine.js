@@ -79,11 +79,15 @@ class RuleEngine {
         console.log(`✓ RuleEngine started. Checking rules every ${this.checkIntervalMs / 1000} seconds`);
 
         // Run immediately on start
-        this.evaluateRules();
+        this.evaluateRules().catch(error => {
+            console.error('❌ Unhandled error in evaluateRules (initial run):', error);
+        });
 
         // Then run periodically
         this.intervalId = setInterval(() => {
-            this.evaluateRules();
+            this.evaluateRules().catch(error => {
+                console.error('❌ Unhandled error in evaluateRules (periodic run):', error);
+            });
         }, this.checkIntervalMs);
     }
 
