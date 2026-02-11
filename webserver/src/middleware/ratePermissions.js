@@ -42,8 +42,6 @@ async function loadRulesForRole(pool, role) {
   const cached = permissionsCache.get(role);
   if (cached && cached.expiresAt > now) return cached.rules;
 
-
-
   const query = `
     SELECT role, method, path_pattern, COALESCE(match_type,'prefix') AS match_type, allow,
            COALESCE(rate_limit_max, 0) AS rate_limit_max,
@@ -51,7 +49,21 @@ async function loadRulesForRole(pool, role) {
     FROM permissions
     WHERE role = $1
   `;
-  const { rows } = await pool.query(query, [role]);
+
+  let rows;
+  try {
+    ({ rows } = await pool.query(query, [role]));
+  } catch (err) {
+    // Gracefully handle missing permissions table (e.g. DB not fully initialized)
+    if (err.message && err.message.includes('does not exist')) {
+      console.warn('ratePermissions: permissions table not found, allowing all requests');
+      const emptyRules = [];
+      permissionsCache.set(role, { rules: emptyRules, expiresAt: now + defaultCacheMs });
+      return emptyRules;
+    }
+    throw err;
+  }
+
   const rules = rows.map(r => ({
     role: r.role,
     method: r.method || '*',
