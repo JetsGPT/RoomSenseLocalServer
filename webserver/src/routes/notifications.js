@@ -15,6 +15,8 @@ const router = express.Router();
 // Valid conditions for rules
 const VALID_CONDITIONS = ['>', '<', '>=', '<=', '==', '!='];
 const VALID_PRIORITIES = ['min', 'low', 'default', 'high', 'urgent', 'max'];
+const VALID_HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH'];
+const MAX_WEBHOOK_PAYLOAD_BYTES = 10240; // 10 KB
 
 // ============================================================================
 // Helper Functions
@@ -94,6 +96,30 @@ function validateRuleInput(data, isUpdate = false) {
         }
     }
 
+    // Webhook-specific validations
+    if (data.webhook_http_method !== undefined) {
+        if (!VALID_HTTP_METHODS.includes(data.webhook_http_method.toUpperCase())) {
+            errors.push(`webhook_http_method must be one of: ${VALID_HTTP_METHODS.join(', ')}`);
+        }
+    }
+    if (data.webhook_payload !== undefined && data.webhook_payload !== null) {
+        try {
+            const payloadStr = typeof data.webhook_payload === 'string'
+                ? data.webhook_payload
+                : JSON.stringify(data.webhook_payload);
+            if (Buffer.byteLength(payloadStr, 'utf8') > MAX_WEBHOOK_PAYLOAD_BYTES) {
+                errors.push(`webhook_payload must be less than ${MAX_WEBHOOK_PAYLOAD_BYTES / 1024}KB`);
+            }
+        } catch {
+            errors.push('webhook_payload must be valid JSON');
+        }
+    }
+    if (data.webhook_auth_header !== undefined && data.webhook_auth_header !== null) {
+        if (typeof data.webhook_auth_header !== 'string' || data.webhook_auth_header.length > 500) {
+            errors.push('webhook_auth_header must be a string of 500 characters or less');
+        }
+    }
+
     // Validate string lengths
     if (data.name && data.name.length > 255) {
         errors.push('name must be 255 characters or less');
@@ -165,6 +191,22 @@ function sanitizeRuleData(data) {
     if (data.is_enabled !== undefined) {
         sanitized.is_enabled = Boolean(data.is_enabled);
     }
+    // Webhook-specific fields
+    if (data.webhook_http_method !== undefined) {
+        sanitized.webhook_http_method = String(data.webhook_http_method).trim().toUpperCase();
+    }
+    if (data.webhook_payload !== undefined) {
+        sanitized.webhook_payload = data.webhook_payload === null
+            ? null
+            : (typeof data.webhook_payload === 'string'
+                ? JSON.parse(data.webhook_payload)
+                : data.webhook_payload);
+    }
+    if (data.webhook_auth_header !== undefined) {
+        sanitized.webhook_auth_header = data.webhook_auth_header
+            ? String(data.webhook_auth_header).trim().substring(0, 500)
+            : null;
+    }
 
     return sanitized;
 }
@@ -187,6 +229,7 @@ router.get('/rules', requireLogin, async (req, res) => {
                 id, name, sensor_id, sensor_type, condition, threshold,
                 notification_provider, notification_target, notification_priority,
                 notification_title, notification_message, cooldown_seconds,
+                webhook_http_method, webhook_payload, webhook_auth_header,
                 is_enabled, last_triggered_at, trigger_count, created_at, updated_at
             FROM notification_rules
             WHERE user_id = $1
@@ -225,6 +268,7 @@ router.get('/rules/:id', requireLogin, async (req, res) => {
                 id, name, sensor_id, sensor_type, condition, threshold,
                 notification_provider, notification_target, notification_priority,
                 notification_title, notification_message, cooldown_seconds,
+                webhook_http_method, webhook_payload, webhook_auth_header,
                 is_enabled, last_triggered_at, trigger_count, created_at, updated_at
             FROM notification_rules
             WHERE id = $1 AND user_id = $2
@@ -281,12 +325,14 @@ router.post('/rules', requireLogin, async (req, res) => {
             INSERT INTO notification_rules 
             (user_id, name, sensor_id, sensor_type, condition, threshold,
              notification_provider, notification_target, notification_priority,
-             notification_title, notification_message, cooldown_seconds, is_enabled)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+             notification_title, notification_message, cooldown_seconds,
+             webhook_http_method, webhook_payload, webhook_auth_header, is_enabled)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             RETURNING 
                 id, name, sensor_id, sensor_type, condition, threshold,
                 notification_provider, notification_target, notification_priority,
                 notification_title, notification_message, cooldown_seconds,
+                webhook_http_method, webhook_payload, webhook_auth_header,
                 is_enabled, last_triggered_at, trigger_count, created_at, updated_at
         `, [
             userId,
@@ -301,6 +347,9 @@ router.post('/rules', requireLogin, async (req, res) => {
             data.notification_title || null,
             data.notification_message || null,
             data.cooldown_seconds !== undefined ? data.cooldown_seconds : 300,
+            data.webhook_http_method || 'POST',
+            data.webhook_payload || null,
+            data.webhook_auth_header || null,
             data.is_enabled !== undefined ? data.is_enabled : true
         ]);
 
@@ -360,7 +409,8 @@ router.put('/rules/:id', requireLogin, async (req, res) => {
         const allowedFields = [
             'name', 'sensor_id', 'sensor_type', 'condition', 'threshold',
             'notification_provider', 'notification_target', 'notification_priority',
-            'notification_title', 'notification_message', 'cooldown_seconds', 'is_enabled'
+            'notification_title', 'notification_message', 'cooldown_seconds',
+            'webhook_http_method', 'webhook_payload', 'webhook_auth_header', 'is_enabled'
         ];
 
         for (const field of allowedFields) {
@@ -386,6 +436,7 @@ router.put('/rules/:id', requireLogin, async (req, res) => {
                 id, name, sensor_id, sensor_type, condition, threshold,
                 notification_provider, notification_target, notification_priority,
                 notification_title, notification_message, cooldown_seconds,
+                webhook_http_method, webhook_payload, webhook_auth_header,
                 is_enabled, last_triggered_at, trigger_count, created_at, updated_at
         `, values);
 
@@ -522,6 +573,15 @@ router.post('/rules/:id/trigger', requireLogin, async (req, res) => {
 
         // Build and send notification
         const payload = notificationService.buildNotificationPayload(rule, mockSensorData);
+
+        // Inject webhook-specific metadata if this is a webhook rule
+        if (rule.notification_provider === 'webhook') {
+            payload.metadata = payload.metadata || {};
+            payload.metadata.httpMethod = rule.webhook_http_method || 'POST';
+            payload.metadata.customPayload = rule.webhook_payload || null;
+            payload.metadata.authHeader = rule.webhook_auth_header || null;
+            payload.metadata.sensorData = mockSensorData;
+        }
         const result = await notificationService.send(rule.notification_provider, payload);
 
         if (result.success) {
@@ -650,6 +710,7 @@ router.get('/status', requireLogin, (req, res) => {
 function getProviderDescription(providerName) {
     const descriptions = {
         'ntfy': 'Push notifications via ntfy.sh - supports mobile and desktop notifications',
+        'webhook': 'Custom HTTP webhook - call any external URL with sensor data (smart plugs, IFTTT, etc.)',
         'email': 'Email notifications (not yet implemented)',
         'sms': 'SMS notifications (not yet implemented)'
     };

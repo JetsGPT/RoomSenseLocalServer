@@ -133,6 +133,7 @@ class RuleEngine {
                     id, user_id, name, sensor_id, sensor_type, condition, threshold,
                     notification_provider, notification_target, notification_priority,
                     notification_title, notification_message, cooldown_seconds,
+                    webhook_http_method, webhook_payload, webhook_auth_header,
                     is_enabled, last_triggered_at, trigger_count
                 FROM notification_rules
                 WHERE is_enabled = true
@@ -356,6 +357,15 @@ class RuleEngine {
 
                     // Build notification payload
                     const payload = notificationService.buildNotificationPayload(rule, sensorData);
+
+                    // Inject webhook-specific metadata
+                    if (rule.notification_provider === 'webhook') {
+                        payload.metadata = payload.metadata || {};
+                        payload.metadata.httpMethod = rule.webhook_http_method || 'POST';
+                        payload.metadata.customPayload = rule.webhook_payload || null;
+                        payload.metadata.authHeader = rule.webhook_auth_header || null;
+                        payload.metadata.sensorData = sensorData;
+                    }
 
                     // Send notification
                     console.log(`🔔 Rule "${rule.name}" triggered: ${rule.sensor_type} ${sensorData.value} ${rule.condition} ${rule.threshold}`);

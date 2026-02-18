@@ -6,6 +6,7 @@
  */
 
 import { NtfyProvider } from './providers/NtfyProvider.js';
+import { WebhookProvider } from './providers/WebhookProvider.js';
 
 class NotificationService {
     constructor() {
@@ -24,6 +25,7 @@ class NotificationService {
 
         // Register default providers
         this.registerProvider(new NtfyProvider());
+        this.registerProvider(new WebhookProvider());
 
         // Future providers can be added here:
         // this.registerProvider(new EmailProvider());
@@ -157,9 +159,9 @@ class NotificationService {
         const message = rule.notification_message
             ? this.interpolateTemplate(rule.notification_message, rule, sensorData)
             : `${rule.sensor_type} ${action} threshold of ${rule.threshold}.\n` +
-              `Current value: ${sensorData.value}\n` +
-              `Sensor: ${sensorData.sensor_box || rule.sensor_id}\n` +
-              `Time: ${new Date(sensorData.timestamp || Date.now()).toLocaleString()}`;
+            `Current value: ${sensorData.value}\n` +
+            `Sensor: ${sensorData.sensor_box || rule.sensor_id}\n` +
+            `Time: ${new Date(sensorData.timestamp || Date.now()).toLocaleString()}`;
 
         return {
             target: rule.notification_target,
