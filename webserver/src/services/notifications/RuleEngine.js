@@ -6,7 +6,7 @@
  */
 
 import pg from 'pg';
-import { influxClient, organisation, bucket } from '../../routes/sensors/influxClient.js';
+import { influxClient } from '../../routes/sensors/influxClient.js';
 import notificationService from './NotificationService.js';
 import fs from 'fs';
 
@@ -153,11 +153,15 @@ class RuleEngine {
      */
     async getLatestSensorReading(sensorId, sensorType) {
         return new Promise((resolve) => {
-            const queryClient = influxClient.getQueryApi(organisation);
+            // Read config dynamically from process.env to ensure variables are loaded
+            const org = process.env.INFLUX_ORG || 'RoomSense';
+            const bucketName = process.env.INFLUX_BUCKET || 'sensors_data';
 
-            // Build the Flux query for the latest reading
+            const queryClient = influxClient.getQueryApi(org);
+
+            // Use the dynamic bucketName
             let fluxQuery = `
-                from(bucket: "${bucket}")
+                from(bucket: "${bucketName}")
                     |> range(start: -5m)
                     |> filter(fn: (r) => r["_measurement"] == "sensor_data")
                     |> filter(fn: (r) => r["sensor_type"] == "${this.escapeFluxString(sensorType)}")
