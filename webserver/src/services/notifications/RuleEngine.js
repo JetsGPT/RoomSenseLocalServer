@@ -115,9 +115,9 @@ class RuleEngine {
      */
     getStatus() {
         return {
-            isRunning: this.isRunning,
+            running: this.isRunning,
+            checkedAt: this.lastCheckTime,
             checkIntervalMs: this.checkIntervalMs,
-            lastCheckTime: this.lastCheckTime,
             initialized: !!this.pool
         };
     }
@@ -323,6 +323,7 @@ class RuleEngine {
             const rules = await this.getActiveRules();
 
             if (rules.length === 0) {
+                console.log('📋 No active rules to evaluate');
                 return;
             }
 
@@ -330,6 +331,8 @@ class RuleEngine {
 
             for (const rule of rules) {
                 try {
+                    console.log(`  📌 Rule "${rule.name}" [${rule.notification_provider}]: ${rule.sensor_type} ${rule.condition} ${rule.threshold} (sensor: ${rule.sensor_id})`);
+
                     // Get the latest sensor reading for this rule
                     const sensorData = await this.getLatestSensorReading(
                         rule.sensor_id,
@@ -337,9 +340,11 @@ class RuleEngine {
                     );
 
                     if (!sensorData) {
-                        // No data available for this sensor/type combination
+                        console.log(`  ⚠️  No recent data found for sensor="${rule.sensor_id}" type="${rule.sensor_type}" (within last 5m)`);
                         continue;
                     }
+
+                    console.log(`  📊 Got reading: ${sensorData.value} (sensor_box: ${sensorData.sensor_box})`);
 
                     // Evaluate the condition
                     const conditionMet = this.evaluateCondition(
@@ -349,6 +354,7 @@ class RuleEngine {
                     );
 
                     if (!conditionMet) {
+                        console.log(`  ➖ Condition not met: ${sensorData.value} ${rule.condition} ${rule.threshold} → false`);
                         continue;
                     }
 
