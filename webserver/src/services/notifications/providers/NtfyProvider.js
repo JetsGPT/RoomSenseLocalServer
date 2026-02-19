@@ -49,24 +49,18 @@ export class NtfyProvider extends NotificationProvider {
 
         const url = `${this.baseUrl}/${encodeURIComponent(target)}`;
 
-        const headers = {
-            'Content-Type': 'text/plain',
-            'Title': title || 'RoomSense Alert',
-            'Priority': String(PRIORITY_MAP[priority] || PRIORITY_MAP['default'])
+        const body = {
+            title: title || 'RoomSense Alert',
+            message: message,
+            priority: PRIORITY_MAP[priority] || PRIORITY_MAP['default'],
+            tags: Array.isArray(metadata.tags) ? metadata.tags : (metadata.tags ? [metadata.tags] : []),
+            click: metadata.click,
+            actions: metadata.actions
         };
 
-        // Add optional headers
-        if (metadata.tags) {
-            headers['Tags'] = Array.isArray(metadata.tags) ? metadata.tags.join(',') : metadata.tags;
-        }
-
-        if (metadata.click) {
-            headers['Click'] = metadata.click;
-        }
-
-        if (metadata.actions) {
-            headers['Actions'] = metadata.actions;
-        }
+        const headers = {
+            'Content-Type': 'application/json'
+        };
 
         // Add authorization if token is configured
         if (this.accessToken) {
@@ -77,7 +71,7 @@ export class NtfyProvider extends NotificationProvider {
             const response = await fetch(url, {
                 method: 'POST',
                 headers,
-                body: message
+                body: JSON.stringify(body)
             });
 
             if (!response.ok) {
