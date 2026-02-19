@@ -506,7 +506,10 @@ router.post('/rules/:id/test', requireLogin, async (req, res) => {
 
         // Get the rule
         const ruleResult = await pool.query(`
-            SELECT * FROM notification_rules WHERE id = $1 AND user_id = $2
+            SELECT nr.*, bc.name as sensor_box_name 
+            FROM notification_rules nr
+            LEFT JOIN ble_connections bc ON nr.sensor_id = bc.address
+            WHERE nr.id = $1 AND nr.user_id = $2
         `, [ruleId, userId]);
 
         if (ruleResult.rows.length === 0) {

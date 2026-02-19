@@ -131,13 +131,15 @@ class RuleEngine {
         try {
             const result = await this.pool.query(`
                 SELECT 
-                    id, user_id, name, sensor_id, sensor_type, condition, threshold,
-                    notification_provider, notification_target, notification_priority,
-                    notification_title, notification_message, cooldown_seconds,
-                    webhook_http_method, webhook_payload, webhook_auth_header,
-                    is_enabled, last_triggered_at, trigger_count
-                FROM notification_rules
-                WHERE is_enabled = true
+                    nr.id, nr.user_id, nr.name, nr.sensor_id, nr.sensor_type, nr.condition, nr.threshold,
+                    nr.notification_provider, nr.notification_target, nr.notification_priority,
+                    nr.notification_title, nr.notification_message, nr.cooldown_seconds,
+                    nr.webhook_http_method, nr.webhook_payload, nr.webhook_auth_header,
+                    nr.is_enabled, nr.last_triggered_at, nr.trigger_count,
+                    bc.name as sensor_box_name
+                FROM notification_rules nr
+                LEFT JOIN ble_connections bc ON nr.sensor_id = bc.address
+                WHERE nr.is_enabled = true
             `);
             return result.rows;
         } catch (error) {
@@ -339,8 +341,9 @@ class RuleEngine {
                     console.log(`  📌 Rule "${rule.name}" [${rule.notification_provider}]: ${rule.sensor_type} ${rule.condition} ${rule.threshold} (sensor: ${rule.sensor_id})`);
 
                     // Get the latest sensor reading for this rule
+                    // Use the mapped sensor box name (e.g. "box_4C2E26") if available, otherwise fall back to sensor_id (MAC)
                     const sensorData = await this.getLatestSensorReading(
-                        rule.sensor_id,
+                        rule.sensor_box_name || rule.sensor_id,
                         rule.sensor_type
                     );
 
@@ -423,7 +426,7 @@ class RuleEngine {
     async testRule(rule) {
         try {
             const sensorData = await this.getLatestSensorReading(
-                rule.sensor_id,
+                rule.sensor_box_name || rule.sensor_id,
                 rule.sensor_type
             );
 
