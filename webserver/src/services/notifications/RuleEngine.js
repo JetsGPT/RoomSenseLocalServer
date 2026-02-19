@@ -7,6 +7,7 @@
 
 import pg from 'pg';
 import { influxClient } from '../../routes/sensors/influxClient.js';
+import { sanitizeSensorBox } from '../../routes/sensors/utils.js';
 import notificationService from './NotificationService.js';
 import fs from 'fs';
 
@@ -159,6 +160,10 @@ class RuleEngine {
 
             const queryClient = influxClient.getQueryApi(org);
 
+            // Sanitize sensorId the same way data is sanitized when written to InfluxDB
+            // (sanitizeSensorBox strips colons from MAC addresses, removes "RoomSense-" prefix, etc.)
+            const sanitizedSensorId = sensorId && sensorId !== '*' ? (sanitizeSensorBox(sensorId) || sensorId) : sensorId;
+
             // Use the dynamic bucketName
             let fluxQuery = `
                 from(bucket: "${bucketName}")
@@ -168,8 +173,8 @@ class RuleEngine {
             `;
 
             // Add sensor_box filter if not wildcard
-            if (sensorId && sensorId !== '*') {
-                fluxQuery += `    |> filter(fn: (r) => r["sensor_box"] == "${this.escapeFluxString(sensorId)}")\n`;
+            if (sanitizedSensorId && sanitizedSensorId !== '*') {
+                fluxQuery += `    |> filter(fn: (r) => r["sensor_box"] == "${this.escapeFluxString(sanitizedSensorId)}")\n`;
             }
 
             fluxQuery += `
