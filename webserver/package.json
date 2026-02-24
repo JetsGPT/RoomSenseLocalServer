@@ -21,7 +21,8 @@
     "express": "^4.21.2",
     "express-session": "^1.18.2",
     "pg": "^8.14.1",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "@google/generative-ai": "^0.24.0"
   },
   "type": "module"
 }

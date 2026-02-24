@@ -91,7 +91,11 @@ import deviceRouter, { initDatabasePool, restorePersistedConnections } from './r
 import floorPlansRouter, { initDatabasePool as initFloorPlansPool } from './routes/floorPlans.js';
 import weatherRouter from './routes/weather.js';
 import notificationRouter from './routes/notifications.js';
+import aiRouter from './routes/ai.js';
+import settingsRouter from './routes/settings.js';
 import ruleEngine from './services/notifications/RuleEngine.js';
+import sensorDataService from './services/SensorDataService.js';
+import aiService from './services/AiService.js';
 import { startGatewayClient } from "./gatewayClient.js";
 app.use(express.json());
 
@@ -222,12 +226,18 @@ initFloorPlansPool(pool);
 // Initialize rule engine for notifications
 ruleEngine.initialize(pool);
 
+// Initialize AI services
+sensorDataService.initialize(pool);
+aiService.initialize(pool);
+
 app.use('/api/users', userRouter);
 app.use('/api/sensors', sensorRouter);
 app.use('/api/devices', deviceRouter);
 app.use('/api/floor-plans', floorPlansRouter);
 app.use('/api/weather', weatherRouter);
 app.use('/api/notifications', notificationRouter);
+app.use('/api/ai', aiRouter);
+app.use('/api/settings', settingsRouter);
 if (process.env.NODE_ENV === 'development') {
     app.use('/testing', testingRouter);
     console.log('⚠️  Testing routes enabled (development mode only)');
