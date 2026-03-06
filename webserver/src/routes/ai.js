@@ -67,7 +67,7 @@ router.post('/chat', requireLogin, async (req, res) => {
 router.get('/status', requireLogin, (req, res) => {
     res.status(200).json({
         available: !!aiService.genAI,
-        model: 'gemini-2.0-flash'
+        model: 'gemini-3-flash-preview'
     });
 });
 

@@ -325,7 +325,7 @@ INSTRUCTIONS:
 
         // Start chat with history
         const chat = await this.genAI.chats.create({
-            model: 'gemini-2.0-flash',
+            model: 'gemini-3-flash-preview',
             history: mappedHistory,
             config: {
                 systemInstruction: systemInstruction,
@@ -370,7 +370,7 @@ INSTRUCTIONS:
         }
 
         // Extract final text response
-        const textResponse = response.text || 'I wasn\'t able to generate a response. Please try again.';
+        const textResponse = (typeof response.text === 'string') ? response.text : (response.text ? String(response.text) : 'I wasn\'t able to generate a response. Please try again.');
 
         // Get updated history and cap it
         let updatedHistory = await chat.getHistory();
