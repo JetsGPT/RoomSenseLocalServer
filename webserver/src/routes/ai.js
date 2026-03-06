@@ -55,7 +55,7 @@ router.post('/chat', requireLogin, async (req, res) => {
             return res.status(503).json({ error: 'AI service not configured' });
         }
 
-        res.status(500).json({ error: 'Failed to process AI request' });
+        res.status(500).json({ error: 'Failed to process AI request', details: error.message });
     }
 });
 

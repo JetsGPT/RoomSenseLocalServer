@@ -12,7 +12,7 @@
  * - All data access goes through SensorDataService (sanitized queries)
  */
 
-import { GoogleGenerativeAI, SchemaType, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
+import { GoogleGenAI, Type, HarmCategory, HarmBlockThreshold } from '@google/genai';
 import sensorDataService from './SensorDataService.js';
 
 // Maximum conversation turns to keep (user + model turns)
@@ -52,7 +52,7 @@ class AiService {
             return;
         }
 
-        this.genAI = new GoogleGenerativeAI(apiKey);
+        this.genAI = new GoogleGenAI({ apiKey });
         console.log('✓ AiService initialized');
     }
 
@@ -100,14 +100,14 @@ class AiService {
                     name: 'getLatestReading',
                     description: 'Get the most recent sensor reading for a specific room and sensor type. Use this when the user asks about a specific measurement in a specific room.',
                     parameters: {
-                        type: SchemaType.OBJECT,
+                        type: Type.OBJECT,
                         properties: {
                             roomName: {
-                                type: SchemaType.STRING,
+                                type: Type.STRING,
                                 description: 'The room/device name (use the display name from the system context, e.g. "Living Room", "Bedroom")'
                             },
                             sensorType: {
-                                type: SchemaType.STRING,
+                                type: Type.STRING,
                                 description: 'The sensor type to query (use the sensor types from the system context, e.g. "temperature", "humidity")'
                             }
                         },
@@ -116,28 +116,20 @@ class AiService {
                 },
                 {
                     name: 'getAllLatestReadings',
-                    description: 'Get the most recent readings for ALL rooms and ALL sensor types at once. Use this when comparing rooms, finding the warmest/coldest/most humid room, or getting a full overview of all sensors.',
-                    parameters: {
-                        type: SchemaType.OBJECT,
-                        properties: {}
-                    }
+                    description: 'Get the most recent readings for ALL rooms and ALL sensor types at once. Use this when comparing rooms, finding the warmest/coldest/most humid room, or getting a full overview of all sensors.'
                 },
                 {
                     name: 'getActiveDevices',
-                    description: 'Get a list of all active sensor devices/rooms with their names, IDs, and last seen timestamps. Use this when the user asks what rooms or devices they have.',
-                    parameters: {
-                        type: SchemaType.OBJECT,
-                        properties: {}
-                    }
+                    description: 'Get a list of all active sensor devices/rooms with their names, IDs, and last seen timestamps. Use this when the user asks what rooms or devices they have.'
                 },
                 {
                     name: 'getMoldRisk',
                     description: 'Get the mold risk assessment for a specific room. Returns risk status (green/yellow/red), risk score (0-100), current temperature and humidity, and an explanation.',
                     parameters: {
-                        type: SchemaType.OBJECT,
+                        type: Type.OBJECT,
                         properties: {
                             roomName: {
-                                type: SchemaType.STRING,
+                                type: Type.STRING,
                                 description: 'The room name to check mold risk for'
                             }
                         },
@@ -146,44 +138,36 @@ class AiService {
                 },
                 {
                     name: 'getMoldRiskAllRooms',
-                    description: 'Get the mold risk assessment for ALL rooms at once. Use this when the user asks about overall mold risk or which rooms have warnings.',
-                    parameters: {
-                        type: SchemaType.OBJECT,
-                        properties: {}
-                    }
+                    description: 'Get the mold risk assessment for ALL rooms at once. Use this when the user asks about overall mold risk or which rooms have warnings.'
                 },
                 {
                     name: 'getNotificationRules',
-                    description: 'Get the user\'s notification/alert rules. Shows what automated alerts are configured, their conditions, and whether they are enabled.',
-                    parameters: {
-                        type: SchemaType.OBJECT,
-                        properties: {}
-                    }
+                    description: 'Get the user\'s notification/alert rules. Shows what automated alerts are configured, their conditions, and whether they are enabled.'
                 },
                 {
                     name: 'getSensorHistory',
                     description: 'Get historical sensor data for a specific room and sensor type over a time range. Returns aggregated data points and summary statistics (min, max, mean). Use this for trend analysis, historical comparisons, or when the user asks about past data.',
                     parameters: {
-                        type: SchemaType.OBJECT,
+                        type: Type.OBJECT,
                         properties: {
                             roomName: {
-                                type: SchemaType.STRING,
+                                type: Type.STRING,
                                 description: 'The room name to query history for'
                             },
                             sensorType: {
-                                type: SchemaType.STRING,
+                                type: Type.STRING,
                                 description: 'The sensor type to query (e.g. "temperature", "humidity")'
                             },
                             startTime: {
-                                type: SchemaType.STRING,
+                                type: Type.STRING,
                                 description: 'Start of the time range. Use relative format like "-24h", "-7d", "-1h", "-30d" or ISO 8601 format like "2026-02-23T00:00:00Z". Default is "-24h".'
                             },
                             endTime: {
-                                type: SchemaType.STRING,
+                                type: Type.STRING,
                                 description: 'End of the time range. Use "now()" for current time, or ISO 8601 format. Default is "now()".'
                             },
                             aggregation: {
-                                type: SchemaType.STRING,
+                                type: Type.STRING,
                                 description: 'Aggregation function for the data: "mean", "min", "max", "sum", or "count". Default is "mean".'
                             }
                         },
@@ -192,11 +176,7 @@ class AiService {
                 },
                 {
                     name: 'getCurrentWeather',
-                    description: 'Get the current outdoor weather conditions (temperature, humidity, wind speed, precipitation). Use this when the user asks about outdoor conditions or wants to compare indoor vs outdoor.',
-                    parameters: {
-                        type: SchemaType.OBJECT,
-                        properties: {}
-                    }
+                    description: 'Get the current outdoor weather conditions (temperature, humidity, wind speed, precipitation). Use this when the user asks about outdoor conditions or wants to compare indoor vs outdoor.'
                 }
             ]
         }];
@@ -318,25 +298,44 @@ INSTRUCTIONS:
             trimmedHistory = trimmedHistory.slice(-MAX_HISTORY_TURNS);
         }
 
+        // History can arrive in two formats:
+        // 1. SDK format from getHistory(): { role: 'user'|'model', parts: [{ text: '...' }, ...] }
+        // 2. Simple format (if frontend simplified): { role: 'user'|'ai', text: '...' }
+        // We normalize to SDK format, strip function call/response parts, and fix role names.
+        const mappedHistory = trimmedHistory
+            .map(msg => {
+                const role = msg.role === 'ai' ? 'model' : (msg.role || 'user');
+
+                // If it already has parts array (SDK format from getHistory)
+                if (Array.isArray(msg.parts)) {
+                    // Keep only text parts — strip functionCall/functionResponse parts
+                    // which can't be re-serialized properly across requests
+                    const textParts = msg.parts.filter(p => p.text !== undefined);
+                    if (textParts.length === 0) return null; // Skip pure function-call turns
+                    return { role, parts: textParts };
+                }
+
+                // Simple format: { role, text }
+                return { role, parts: [{ text: msg.text || '' }] };
+            })
+            .filter(Boolean); // Remove nulls (skipped function-only turns)
+
         // Build dynamic system prompt with current inventory
         const systemInstruction = await this._buildSystemPrompt();
 
-        // Create model with tools and safety settings
-        const model = this.genAI.getGenerativeModel({
-            model: 'gemini-2.0-flash',
-            systemInstruction,
-            tools: this._getToolDeclarations(),
-            safetySettings: this._getSafetySettings()
-        });
-
         // Start chat with history
-        const chat = model.startChat({
-            history: trimmedHistory
+        const chat = await this.genAI.chats.create({
+            model: 'gemini-2.0-flash',
+            history: mappedHistory,
+            config: {
+                systemInstruction: systemInstruction,
+                tools: this._getToolDeclarations(),
+                safetySettings: this._getSafetySettings()
+            }
         });
 
         // Send user message
-        let result = await chat.sendMessage(userMessage);
-        let response = result.response;
+        let response = await chat.sendMessage({ message: userMessage });
 
         // Multi-turn function calling loop
         // Gemini may request one or more function calls before giving a final text response
@@ -344,31 +343,25 @@ INSTRUCTIONS:
         let round = 0;
 
         while (round < MAX_TOOL_ROUNDS) {
-            const candidate = response.candidates?.[0];
-            if (!candidate) break;
-
-            // Collect all function calls from this response
-            const functionCalls = candidate.content?.parts?.filter(p => p.functionCall) || [];
-
+            const functionCalls = response.functionCalls || [];
             if (functionCalls.length === 0) break; // No more tool calls — we have a text response
 
             console.log(`[AI] Round ${round + 1}: ${functionCalls.length} function call(s)`);
 
             // Execute all function calls
             const functionResponses = [];
-            for (const part of functionCalls) {
-                const toolResult = await this._executeTool(part.functionCall, userId);
+            for (const call of functionCalls) {
+                const toolResult = await this._executeTool(call, userId);
                 functionResponses.push({
                     functionResponse: {
-                        name: part.functionCall.name,
+                        name: call.name,
                         response: toolResult
                     }
                 });
             }
 
             // Send results back to Gemini
-            result = await chat.sendMessage(functionResponses);
-            response = result.response;
+            response = await chat.sendMessage(functionResponses);
             round++;
         }
 
@@ -377,7 +370,7 @@ INSTRUCTIONS:
         }
 
         // Extract final text response
-        const textResponse = response.text() || 'I wasn\'t able to generate a response. Please try again.';
+        const textResponse = response.text || 'I wasn\'t able to generate a response. Please try again.';
 
         // Get updated history and cap it
         let updatedHistory = await chat.getHistory();
