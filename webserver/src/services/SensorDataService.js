@@ -428,11 +428,29 @@ class SensorDataService {
     // ========================================================================
 
     /**
+     * Get the saved weather location from DB, or fall back to DEFAULT_LOCATION
+     */
+    async _getSavedLocation() {
+        if (!this.pool) return DEFAULT_LOCATION;
+        try {
+            const result = await this.pool.query(
+                "SELECT value FROM system_settings WHERE key = 'weather_location'"
+            );
+            if (result.rows.length > 0 && result.rows[0].value) {
+                return JSON.parse(result.rows[0].value);
+            }
+        } catch (err) {
+            console.warn('[SensorDataService] Could not read saved location:', err.message);
+        }
+        return DEFAULT_LOCATION;
+    }
+
+    /**
      * Get current outdoor weather from OpenMeteo
      */
     async getCurrentWeather() {
         try {
-            const { latitude, longitude, name } = DEFAULT_LOCATION;
+            const { latitude, longitude, name } = await this._getSavedLocation();
             const apiUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&timezone=auto`;
 
             const response = await fetch(apiUrl);
@@ -460,6 +478,7 @@ class SensorDataService {
             return { success: false, error: `Failed to get weather: ${error.message}` };
         }
     }
+
 
     // ========================================================================
     // Internal Helpers
