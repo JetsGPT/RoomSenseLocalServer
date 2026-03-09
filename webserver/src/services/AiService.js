@@ -310,35 +310,44 @@ INSTRUCTIONS:
                 if (Array.isArray(msg.parts)) {
                     // Keep only text parts — strip functionCall/functionResponse parts
                     // which can't be re-serialized properly across requests
-                    const textParts = msg.parts.filter(p => p.text !== undefined);
+                    const textParts = msg.parts.filter(p => typeof p.text === 'string' && p.text.length > 0);
                     if (textParts.length === 0) return null; // Skip pure function-call turns
                     return { role, parts: textParts };
                 }
 
                 // Simple format: { role, text }
-                return { role, parts: [{ text: msg.text || '' }] };
+                const text = msg.text || '';
+                if (!text.trim()) return null;
+                return { role, parts: [{ text }] };
             })
             .filter(Boolean); // Remove nulls (skipped function-only turns)
 
         // Build dynamic system prompt with current inventory
         const systemInstruction = await this._buildSystemPrompt();
 
-        // Start chat with history
-        const chat = await this.genAI.chats.create({
-            model: 'gemini-3-flash-preview',
-            history: mappedHistory,
-            config: {
-                systemInstruction: systemInstruction,
-                tools: this._getToolDeclarations(),
-                safetySettings: this._getSafetySettings()
-            }
+        const modelId = 'gemini-3-flash-preview';
+        const config = {
+            systemInstruction: systemInstruction,
+            tools: this._getToolDeclarations(),
+            safetySettings: this._getSafetySettings()
+        };
+
+        // Build the contents array: history + new user message
+        const contents = [
+            ...mappedHistory,
+            { role: 'user', parts: [{ text: userMessage }] }
+        ];
+
+        // Initial request
+        let response = await this.genAI.models.generateContent({
+            model: modelId,
+            contents: contents,
+            config: config
         });
 
-        // Send user message
-        let response = await chat.sendMessage({ message: userMessage });
-
-        // Multi-turn function calling loop
-        // Gemini may request one or more function calls before giving a final text response
+        // Multi-turn function calling loop (matching official Google docs pattern)
+        // After getting function calls, we append the model's response and our
+        // function results to the contents array, then call generateContent again.
         const MAX_TOOL_ROUNDS = 10;
         let round = 0;
 
@@ -348,11 +357,16 @@ INSTRUCTIONS:
 
             console.log(`[AI] Round ${round + 1}: ${functionCalls.length} function call(s)`);
 
-            // Execute all function calls
-            const functionResponses = [];
+            // Append the model's response (contains functionCall parts) to contents
+            if (response.candidates?.[0]?.content) {
+                contents.push(response.candidates[0].content);
+            }
+
+            // Execute all function calls and build function response parts
+            const functionResponseParts = [];
             for (const call of functionCalls) {
                 const toolResult = await this._executeTool(call, userId);
-                functionResponses.push({
+                functionResponseParts.push({
                     functionResponse: {
                         name: call.name,
                         response: toolResult
@@ -360,8 +374,15 @@ INSTRUCTIONS:
                 });
             }
 
-            // Send results back to Gemini
-            response = await chat.sendMessage(functionResponses);
+            // Append function responses as a user turn (per official Google docs)
+            contents.push({ role: 'user', parts: functionResponseParts });
+
+            // Call generateContent again with the updated contents
+            response = await this.genAI.models.generateContent({
+                model: modelId,
+                contents: contents,
+                config: config
+            });
             round++;
         }
 
@@ -372,15 +393,32 @@ INSTRUCTIONS:
         // Extract final text response
         const textResponse = (typeof response.text === 'string') ? response.text : (response.text ? String(response.text) : 'I wasn\'t able to generate a response. Please try again.');
 
-        // Get updated history and cap it
-        let updatedHistory = await chat.getHistory();
-        if (updatedHistory.length > MAX_HISTORY_TURNS) {
-            updatedHistory = updatedHistory.slice(-MAX_HISTORY_TURNS);
+        // Build simplified history for the frontend to send back on next turn
+        // Only keep user text messages and model text responses (no function parts)
+        const updatedHistory = [];
+        for (const entry of contents) {
+            const textParts = (entry.parts || []).filter(p => typeof p.text === 'string' && p.text.length > 0);
+            if (textParts.length > 0) {
+                updatedHistory.push({ role: entry.role, parts: textParts });
+            }
         }
+        // Add the final model response
+        if (response.candidates?.[0]?.content) {
+            const finalContent = response.candidates[0].content;
+            const finalTextParts = (finalContent.parts || []).filter(p => typeof p.text === 'string' && p.text.length > 0);
+            if (finalTextParts.length > 0) {
+                updatedHistory.push({ role: finalContent.role || 'model', parts: finalTextParts });
+            }
+        }
+
+        // Cap history
+        const cappedHistory = updatedHistory.length > MAX_HISTORY_TURNS
+            ? updatedHistory.slice(-MAX_HISTORY_TURNS)
+            : updatedHistory;
 
         return {
             response: textResponse,
-            conversationHistory: updatedHistory
+            conversationHistory: cappedHistory
         };
     }
 }
