@@ -129,7 +129,8 @@ app.use(cors({
             'https://localhost',
             'https://roomsense.local',
             'https://roomsense.info',
-            'https://proxy.roomsense.info'
+            'https://proxy.roomsense.info',
+            'https://100.76.205.69' // nur Vorübergehend für Tailscale
         ];
 
         const isAllowed = allowedOrigins.some(allowedOrigin => {

@@ -427,6 +427,57 @@ INSTRUCTIONS:
             conversationHistory: cappedHistory
         };
     }
+
+    /**
+     * Analyze sensor and weather data to generate meaningful insights.
+     * 
+     * @param {Array} sensorData - The sensor data points
+     * @param {Array} weatherData - The weather data points
+     * @param {string} timeRange - The string representing the time range (e.g., "-24h")
+     * @returns {Promise<string>} - The markdown formatted analysis
+     */
+    async analyzeOverview(sensorData, weatherData, timeRange) {
+        if (!this.genAI) {
+            throw new Error('AI service not initialized. An admin must set the Gemini API key in Settings.');
+        }
+
+        const modelId = 'gemini-3-flash-preview';
+
+        // System instruction specifically tuned for data analysis
+        const systemInstruction = `You are an expert data analyst and smart home automation specialist. 
+Your task is to analyze indoor sensor data and outdoor weather data to provide meaningful insights.
+
+CRITICAL INSTRUCTIONS:
+1. DO NOT simply summarize or restate the data (e.g., do not say "The temperature was 22°C").
+2. Focus on FINDING PATTERNS, ANOMALIES, and CORRELATIONS.
+3. Compare indoor conditions vs outdoor weather where relevant (e.g., "Indoor humidity rose after it started raining").
+4. Suggest POSSIBLE CAUSES for detected anomalies or trends (e.g., "The sudden temperature drop in the living room might be due to an open window").
+5. Keep your response concise, structured, and easy to read. Use markdown formatting (bullet points, bold text).
+6. Do not include a conversational preamble or postscript (e.g., don't say "Here is your analysis" or "Let me know if you need anything else"). Output ONLY the analysis.`;
+
+        const prompt = `Analyze the following home sensor and weather data for the time period: ${timeRange}.
+
+Sensor Data (JSON):
+${JSON.stringify(sensorData)}
+
+Weather Data (JSON):
+${JSON.stringify(weatherData)}
+
+Provide your analytical insights now.`;
+
+        const response = await this.genAI.models.generateContent({
+            model: modelId,
+            contents: prompt,
+            config: {
+                systemInstruction: systemInstruction,
+                safetySettings: this._getSafetySettings()
+            }
+        });
+
+        // Extract final text response
+        const textResponse = (typeof response.text === 'string') ? response.text : (response.text ? String(response.text) : 'Unable to generate analysis.');
+        return textResponse;
+    }
 }
 
 // Singleton

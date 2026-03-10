@@ -118,6 +118,62 @@ router.post('/chat', requireLogin, async (req, res) => {
 });
 
 // ========================================================================
+// Insights & Analysis
+// ========================================================================
+
+/**
+ * POST /api/ai/analyze
+ *
+ * Analyze sensor and weather data over a specific time range to generate insights.
+ *
+ * Request body:
+ *   { sensorData: Array, weatherData: Array, timeRange: string }
+ *
+ * Response:
+ *   { analysis: string }
+ */
+router.post('/analyze', requireLogin, async (req, res) => {
+    try {
+        const { sensorData, weatherData, timeRange } = req.body;
+
+        if (!sensorData || !Array.isArray(sensorData)) {
+            return res.status(400).json({ error: 'sensorData must be an array' });
+        }
+        if (!weatherData || !Array.isArray(weatherData)) {
+            return res.status(400).json({ error: 'weatherData must be an array' });
+        }
+        if (!timeRange) {
+            return res.status(400).json({ error: 'timeRange is required' });
+        }
+
+        const userId = req.session.user.id;
+        console.log(`[AI] Analyze request from user ${userId} for time range: ${timeRange}`);
+
+        // Limit data to prevent prompt injection or exceeding token limits
+        // 500 records is usually a safe amount for a summary
+        const trimmedSensorData = sensorData.slice(-500);
+        const trimmedWeatherData = weatherData.slice(-500);
+
+        const analysis = await aiService.analyzeOverview(
+            trimmedSensorData,
+            trimmedWeatherData,
+            timeRange
+        );
+
+        res.status(200).json({ analysis });
+
+    } catch (error) {
+        console.error('[AI] Analyze error:', error);
+
+        if (error.message?.includes('API key')) {
+            return res.status(503).json({ error: 'AI service not configured' });
+        }
+
+        res.status(500).json({ error: 'Failed to generate analysis', details: error.message });
+    }
+});
+
+// ========================================================================
 // Conversations CRUD
 // ========================================================================
 
