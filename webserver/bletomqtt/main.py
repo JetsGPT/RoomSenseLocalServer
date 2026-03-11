@@ -46,6 +46,8 @@ MQTT_CERT_FILE = os.getenv("MQTT_CERT_FILE", "/certs/server.cert")
 MQTT_KEY_FILE = os.getenv("MQTT_KEY_FILE", "/certs/server.key")
 MQTT_TLS_INSECURE = os.getenv("MQTT_TLS_INSECURE", "false").lower() == "true"
 
+KNOWN_DEVICES_FILE = "/bletomqtt/known_devices.json"
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 log = logging.getLogger("ble_gateway")
 
@@ -355,6 +357,7 @@ class BLEPeripheral:
                 # NOW we are truly ready and authenticated
                 self.status = "connected"
                 if self.manager:
+                    self.manager.register_known_device(self.address, self.name, self.box_address)
                     self.manager.signal_state_change(self.address)
                 
                 # Start notifications - handle failure
@@ -435,6 +438,85 @@ class BLEConnectionManager:
         
         # Event-based signaling for immediate state change notification
         self._state_change_events: Dict[str, asyncio.Event] = {}
+        
+        # Known devices auto-reconnect
+        self.known_devices: Dict[str, dict] = {}
+        self._auto_reconnect_task: Optional[asyncio.Task] = None
+        self._stopping_auto_reconnect = False
+
+    def load_known_devices(self):
+        try:
+            if os.path.exists(KNOWN_DEVICES_FILE):
+                with open(KNOWN_DEVICES_FILE, "r") as f:
+                    self.known_devices = json.load(f)
+                    log.info(f"Loaded {len(self.known_devices)} known devices.")
+        except Exception as e:
+            log.warning(f"Failed to load known devices: {e}")
+
+    def save_known_devices(self):
+        try:
+            # Ensure directory exists just in case
+            os.makedirs(os.path.dirname(KNOWN_DEVICES_FILE), exist_ok=True)
+            with open(KNOWN_DEVICES_FILE, "w") as f:
+                json.dump(self.known_devices, f, indent=2)
+        except Exception as e:
+            log.error(f"Failed to save known devices: {e}")
+
+    def register_known_device(self, address: str, name: str, box_address: Optional[str] = None):
+        addr = address.upper()
+        self.known_devices[addr] = {
+            "address": addr,
+            "name": name,
+            "box_address": box_address,
+            "added_at": int(time.time()),
+        }
+        self.save_known_devices()
+
+    def forget_known_device(self, address: str):
+        addr = address.upper()
+        if addr in self.known_devices:
+            del self.known_devices[addr]
+            self.save_known_devices()
+            log.info(f"Forgot device {addr}")
+
+    async def auto_reconnect_loop(self):
+        """Periodically check known devices and attempt to connect if not already connected."""
+        while not self._stopping_auto_reconnect:
+            try:
+                for addr, device_info in list(self.known_devices.items()):
+                    if self._stopping_auto_reconnect:
+                        break
+                        
+                    # Skip if already connected or in progress
+                    existing = self.peripherals.get(addr)
+                    if existing and existing.status in ["connected", "connecting", "authenticating", "error"]:
+                        continue
+                        
+                    log.info(f"[Auto-Reconnect] Attempting to reconnect to known device {addr}...")
+                    try:
+                        # We spawn this in the background, we don't wait for it here
+                        asyncio.create_task(self.connect_to_device(addr))
+                    except Exception as e:
+                        log.warning(f"[Auto-Reconnect] Failed to trigger connection for {addr}: {e}")
+            except Exception as e:
+                log.error(f"[Auto-Reconnect] Error in auto reconnect loop: {e}")
+                
+            # Check every 20 seconds
+            await asyncio.sleep(20.0)
+
+    def start_auto_reconnect(self):
+        self.load_known_devices()
+        self._stopping_auto_reconnect = False
+        self._auto_reconnect_task = asyncio.create_task(self.auto_reconnect_loop())
+
+    async def stop_auto_reconnect(self):
+        self._stopping_auto_reconnect = True
+        if self._auto_reconnect_task:
+            self._auto_reconnect_task.cancel()
+            try:
+                await self._auto_reconnect_task
+            except asyncio.CancelledError:
+                pass
 
     async def setup_agent(self):
         """Register the BlueZ Agent on the System Bus."""
@@ -625,6 +707,9 @@ async def lifespan(app: FastAPI):
     # Setup Agent
     await _global_manager.setup_agent()
     
+    # Start auto-reconnect
+    _global_manager.start_auto_reconnect()
+    
     # MQTT Setup
     mqtt_kwargs = {"hostname": MQTT_BROKER, "port": MQTT_PORT}
     if MQTT_USERNAME: mqtt_kwargs["username"] = MQTT_USERNAME
@@ -646,6 +731,7 @@ async def lifespan(app: FastAPI):
                 log.info("Successfully connected to MQTT broker.")
                 app_started = True
                 yield
+                await _global_manager.stop_auto_reconnect()
                 await _global_manager.stop_all_peripherals()
                 return
         except Exception as e:
@@ -788,12 +874,28 @@ async def pair_device(address: str, payload: dict):
     return JSONResponse(content={"status": "pairing_timeout", "address": addr, "last_status": conn.status})
 
 @app.post("/disconnect/{address}", dependencies=[Depends(get_api_key)])
-async def disconnect_device(address: str):
+async def disconnect_device(address: str, forget: bool = False):
     if not validate_mac_address(address):
         raise HTTPException(status_code=400, detail=f"Invalid MAC address format: {address}")
     addr = normalize_mac_address(address)
     await _global_manager.disconnect_from_device(addr)
-    return JSONResponse(content={"status": "disconnected", "address": addr})
+    if forget:
+        _global_manager.forget_known_device(addr)
+    return JSONResponse(content={"status": "disconnected", "address": addr, "forgotten": forget})
+
+@app.get("/known_devices", dependencies=[Depends(get_api_key)])
+async def get_known_devices():
+    return JSONResponse(content=list(_global_manager.known_devices.values()))
+
+@app.delete("/known_devices/{address}", dependencies=[Depends(get_api_key)])
+async def forget_known_device(address: str):
+    if not validate_mac_address(address):
+        raise HTTPException(status_code=400, detail=f"Invalid MAC address format: {address}")
+    addr = normalize_mac_address(address)
+    _global_manager.forget_known_device(addr)
+    # Also disconnect if it's currently connected
+    await _global_manager.disconnect_from_device(addr)
+    return JSONResponse(content={"status": "forgotten", "address": addr})
 
 @app.get("/connections", dependencies=[Depends(get_api_key)])
 async def get_connections():
