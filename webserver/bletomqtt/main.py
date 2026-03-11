@@ -650,11 +650,14 @@ class BLEConnectionManager:
     async def connect_to_device(self, address: str) -> BLEPeripheral:
         if address in self.peripherals:
             existing = self.peripherals[address]
-            # If already connected, or in the middle of connecting/authenticating, return as-is
-            if existing.status in ["connected", "connecting", "authenticating"]:
+            is_active = existing._task and not existing._task.done()
+            
+            # If already connected, or in the middle of connecting/authenticating/retrying, return as-is
+            if is_active and existing.status in ["connected", "connecting", "authenticating", "error"]:
                 return existing
+                
             # Otherwise, stop and remove the stale peripheral to start fresh
-            log.info("[%s] Removing stale peripheral (status=%s) before reconnection", address, existing.status)
+            log.info("[%s] Removing stale peripheral (status=%s, is_active=%s) before reconnection", address, existing.status, is_active)
             await existing.stop()
             del self.peripherals[address]
         
