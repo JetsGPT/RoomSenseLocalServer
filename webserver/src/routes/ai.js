@@ -149,8 +149,7 @@ router.post('/analyze', requireLogin, async (req, res) => {
         const userId = req.session.user.id;
         console.log(`[AI] Analyze request from user ${userId} for time range: ${timeRange}`);
 
-        // Limit data to prevent prompt injection or exceeding token limits
-        // 500 records is usually a safe amount for a summary
+
         const trimmedSensorData = sensorData.slice(-500);
         const trimmedWeatherData = weatherData.slice(-500);
 

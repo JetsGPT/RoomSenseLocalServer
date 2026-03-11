@@ -656,25 +656,12 @@ class BLEConnectionManager:
             device = self._last_scan_devices.get(address)
             if not device:
                 raise ValueError(f"Device {address} not found after scan. Ensure the device is powered on and in range.")
-
-        # Clear any stale pairing state before starting a fresh connection
-        self.clear_pairing_request(address)
-        
-        # Remove any stale BlueZ bonds that might cause auth issues
-        await self.remove_bluez_device(address)
-        
-        # Small delay after removing device to let BlueZ settle
-        await asyncio.sleep(0.5)
-        
-        # Re-scan to get a fresh device handle after removal
-        await self.scan_for_devices()
-        device = self._last_scan_devices.get(address)
-        if not device:
-            raise ValueError(f"Device {address} not found after rescan. Ensure the device is powered on and in range.")
         
         # Prepare state event for this connection
         self.get_state_event(address)  # Ensure event exists
         self.clear_state_event(address)  # Reset it
+
+        self.clear_pairing_request(address)
 
         conn = BLEPeripheral(device, device.name, self.mqtt_client, manager=self)
         self.peripherals[address] = conn
@@ -895,6 +882,8 @@ async def forget_known_device(address: str):
     _global_manager.forget_known_device(addr)
     # Also disconnect if it's currently connected
     await _global_manager.disconnect_from_device(addr)
+    # Explicitly remove pairing from BlueZ so it truly forgets
+    await _global_manager.remove_bluez_device(addr)
     return JSONResponse(content={"status": "forgotten", "address": addr})
 
 @app.get("/connections", dependencies=[Depends(get_api_key)])

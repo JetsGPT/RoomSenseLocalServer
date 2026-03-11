@@ -207,7 +207,7 @@ class AiService {
             ? typesResult.data.join(', ')
             : 'Unable to fetch sensor types';
 
-        const locationName = location.name || 'Berlin';
+        const locationName = location.name || 'Vienna';
 
         return `You are RoomSense AI, a smart home assistant with access to real-time sensor data.
 You can query live sensor readings, check device status, assess mold risk, and fetch weather data.
