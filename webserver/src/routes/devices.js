@@ -587,6 +587,88 @@ router.post('/disconnect/:address', authMiddleware, async (req, res) => {
 });
 
 /**
+ * GET /api/devices/known_devices
+ * Gets the list of known devices from the gateway.
+ */
+router.get('/known_devices', authMiddleware, async (req, res) => {
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+        const response = await fetch(`${BLE_GATEWAY_URL}/known_devices`, {
+            method: 'GET',
+            signal: controller.signal,
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': process.env.BLE_GATEWAY_API_KEY || '',
+            },
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            return res.status(response.status).json({ error: 'BLE gateway error' });
+        }
+
+        const data = await response.json();
+        return res.status(200).json(data);
+    } catch (error) {
+        console.error('Error getting known devices:', error);
+        return res.status(500).json({ error: 'Internal server error', detail: error.message });
+    }
+});
+
+/**
+ * DELETE /api/devices/known_devices/:address
+ * Forgets a known device on the gateway.
+ */
+router.delete('/known_devices/:address', authMiddleware, async (req, res) => {
+    const { address } = req.params;
+    if (!address) {
+        return res.status(400).json({ error: 'Missing device address' });
+    }
+
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+        const response = await fetch(`${BLE_GATEWAY_URL}/known_devices/${encodeURIComponent(address)}`, {
+            method: 'DELETE',
+            signal: controller.signal,
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': process.env.BLE_GATEWAY_API_KEY || '',
+            },
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            return res.status(response.status).json({ error: 'BLE gateway error' });
+        }
+
+        const data = await response.json();
+        
+        // Also remove it from DB or mark inactive so name overlay isn't stale
+        if (pool) {
+            try {
+                await pool.query(
+                    `UPDATE ble_connections SET is_active = FALSE WHERE UPPER(address) = $1`,
+                    [address.toUpperCase()]
+                );
+            } catch (dbError) {
+                console.error(`[BLE] Failed to update connection in DB upon forget:`, dbError);
+            }
+        }
+        
+        return res.status(200).json(data);
+    } catch (error) {
+        console.error('Error forgetting device:', error);
+        return res.status(500).json({ error: 'Internal server error', detail: error.message });
+    }
+});
+
+/**
  * GET /api/devices/health
  * Checks the health of the BLE gateway service.
  */
