@@ -382,18 +382,29 @@ class BLEPeripheral:
 
             except (BleakError, asyncio.TimeoutError) as e:
                 log.warning("[%s] BLE error: %s", self.address, e)
-                # Check if this is likely a pairing-related error
                 error_str = str(e).lower()
+                
+                # Check if this is likely a pairing-related error
                 if "auth" in error_str or "pair" in error_str or "encrypt" in error_str or "security" in error_str:
                     log.warning("[%s] Detected pairing-related error, marking as pairing failure", self.address)
                     self._pairing_failed = True
                     self.status = "pairing_failed"
                 else:
                     self.status = "error"
+                
                 # Clean up any pending pairing request on failure
                 if self.manager:
                     self.manager.clear_pairing_request(self.address)
                     self.manager.signal_state_change(self.address)
+                
+                # If BlueZ says device not found, our BLEDevice object is stale (BlueZ garbage collected it).
+                # We must purge it so the next connection attempt triggers a fresh scan.
+                if "not found" in error_str:
+                    log.warning("[%s] Device not found in BlueZ. Purging stale scan cache and aborting loop.", self.address)
+                    if self.manager and self.address in self.manager._last_scan_devices:
+                        del self.manager._last_scan_devices[self.address]
+                    break  # Break out so we don't rapidly loop the stale object
+                    
             except Exception as e:
                 log.error("[%s] Unhandled exception: %s", self.address, e)
                 self.status = "error"
