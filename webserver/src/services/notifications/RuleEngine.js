@@ -385,6 +385,13 @@ class RuleEngine {
                         payload.metadata.sensorData = sensorData;
                     }
 
+                    // Inject outside_server-specific metadata
+                    if (rule.notification_provider === 'outside_server') {
+                        payload.metadata = payload.metadata || {};
+                        payload.metadata.sensorData = sensorData;
+                        payload.metadata.remoteProvider = 'ntfy'; // Provider used on the outside server
+                    }
+
                     // Send notification
                     console.log(`🔔 Rule "${rule.name}" triggered: ${rule.sensor_type} ${sensorData.value} ${rule.condition} ${rule.threshold}`);
 

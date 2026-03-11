@@ -7,6 +7,7 @@
 
 import { NtfyProvider } from './providers/NtfyProvider.js';
 import { WebhookProvider } from './providers/WebhookProvider.js';
+import { OutsideServerProvider } from './providers/OutsideServerProvider.js';
 
 class NotificationService {
     constructor() {
@@ -26,6 +27,7 @@ class NotificationService {
         // Register default providers
         this.registerProvider(new NtfyProvider());
         this.registerProvider(new WebhookProvider());
+        this.registerProvider(new OutsideServerProvider());
 
         // Future providers can be added here:
         // this.registerProvider(new EmailProvider());

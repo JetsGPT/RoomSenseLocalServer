@@ -585,6 +585,13 @@ router.post('/rules/:id/trigger', requireLogin, async (req, res) => {
             payload.metadata.authHeader = rule.webhook_auth_header || null;
             payload.metadata.sensorData = mockSensorData;
         }
+
+        // Inject outside_server-specific metadata
+        if (rule.notification_provider === 'outside_server') {
+            payload.metadata = payload.metadata || {};
+            payload.metadata.sensorData = mockSensorData;
+            payload.metadata.remoteProvider = 'ntfy';
+        }
         const result = await notificationService.send(rule.notification_provider, payload);
 
         if (result.success) {
@@ -714,6 +721,7 @@ function getProviderDescription(providerName) {
     const descriptions = {
         'ntfy': 'Push notifications via ntfy.sh - supports mobile and desktop notifications',
         'webhook': 'Custom HTTP webhook - call any external URL with sensor data (smart plugs, IFTTT, etc.)',
+        'outside_server': 'Relay notifications through the RoomSense Outside Server - uses centralized cloud delivery',
         'email': 'Email notifications (not yet implemented)',
         'sms': 'SMS notifications (not yet implemented)'
     };
