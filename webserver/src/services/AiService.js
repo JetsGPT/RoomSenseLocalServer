@@ -441,6 +441,10 @@ INSTRUCTIONS:
             throw new Error('AI service not initialized. An admin must set the Gemini API key in Settings.');
         }
 
+        if (!sensorData || sensorData.length === 0) {
+            return "Not enough sensor data available to generate meaningful insights for this time range. The sensors may have just started recording or the selected time range might be too short to show patterns.";
+        }
+
         const modelId = 'gemini-3-flash-preview';
 
         // System instruction specifically tuned for data analysis

@@ -173,18 +173,21 @@ router.get('/historical', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'start_date and end_date are required (YYYY-MM-DD)' });
         }
 
-        const cacheKey = `${latitude},${longitude},${start_date},${end_date}`;
+        const start_str = new Date(start_date).toISOString().split('T')[0];
+        const end_str = new Date(end_date).toISOString().split('T')[0];
+
+        const cacheKey = `${latitude},${longitude},${start_str},${end_str}`;
         const cached = getCachedData(weatherCache.historical, cacheKey, HISTORICAL_CACHE_DURATION);
         if (cached) {
             console.log('Serving historical weather from cache');
             return res.json(cached);
         }
 
-        console.log(`Fetching historical weather: ${start_date} to ${end_date}`);
-        const apiUrl = `https://archive-api.open-meteo.com/v1/archive?latitude=${latitude}&longitude=${longitude}&start_date=${start_date}&end_date=${end_date}&hourly=temperature_2m,relative_humidity_2m&timezone=auto`;
+        console.log(`Fetching historical weather: ${start_str} to ${end_str}`);
+        const apiUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&start_date=${start_str}&end_date=${end_str}&hourly=temperature_2m,relative_humidity_2m&timezone=auto`;
 
         const response = await fetch(apiUrl);
-        if (!response.ok) throw new Error(`OpenMeteo Archive API error: ${response.statusText}`);
+        if (!response.ok) throw new Error(`OpenMeteo API error: ${response.statusText}`);
         const data = await response.json();
 
         weatherCache.historical.set(cacheKey, { data, timestamp: Date.now() });
