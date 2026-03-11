@@ -557,8 +557,8 @@ class BLEConnectionManager:
     async def connect_to_device(self, address: str) -> BLEPeripheral:
         if address in self.peripherals:
             existing = self.peripherals[address]
-            # If already connected, return as-is
-            if existing.status == "connected":
+            # If already connected, or in the middle of connecting/authenticating, return as-is
+            if existing.status in ["connected", "connecting", "authenticating"]:
                 return existing
             # Otherwise, stop and remove the stale peripheral to start fresh
             log.info("[%s] Removing stale peripheral (status=%s) before reconnection", address, existing.status)
