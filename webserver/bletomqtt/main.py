@@ -276,15 +276,17 @@ class BLEPeripheral:
         while not self._stopping:
             try:
                 self.status = "connecting"
-                self.client = BleakClient(self.device, timeout=20.0) # Increased timeout for pairing
+                # VERY IMPORTANT: Pass `self.address` (MAC string) to BleakClient on Linux instead of `self.device`.
+                # If we pass `self.device`, Bleak uses the cached DBus path from the scan.
+                # If the user recently "forgot" the device, BlueZ deletes that old DBus path, 
+                # causing BleakClient to instantly fail or timeout for 20 seconds.
+                self.client = BleakClient(self.address, timeout=15.0) 
                 log.info("[%s] Connecting...", self.address)
                 
                 # This call will block if pairing is required until the Agent returns the PIN
                 await self.client.connect()
                 
                 log.info("[%s] Connected", self.address)
-                # Don't set "connected" yet. We are technically connected but arguably 
-                # still performing the security handshake (triggered by read_metadata or pair).
                 self.status = "authenticating"
 
                 def _on_disconnect(_client):
@@ -380,30 +382,34 @@ class BLEPeripheral:
                 try: await self.client.disconnect()
                 except Exception: pass
 
-            except (BleakError, asyncio.TimeoutError) as e:
+            except asyncio.TimeoutError:
+                # asyncio.TimeoutError has an empty string representation `str(e) == ""`
+                log.warning("[%s] BLE Connection timed out (15s). The device is ignoring the request, or BlueZ is stuck.", self.address)
+                self.status = "error"
+                if self.manager:
+                    self.manager.clear_pairing_request(self.address)
+                    self.manager.signal_state_change(self.address)
+            except BleakError as e:
                 log.warning("[%s] BLE error: %s", self.address, e)
                 error_str = str(e).lower()
                 
                 # Check if this is likely a pairing-related error
                 if "auth" in error_str or "pair" in error_str or "encrypt" in error_str or "security" in error_str:
-                    log.warning("[%s] Detected pairing-related error, marking as pairing failure", self.address)
+                    log.warning("[%s] Detected pairing-related error, marking as pairing failure.", self.address)
                     self._pairing_failed = True
                     self.status = "pairing_failed"
                 else:
                     self.status = "error"
                 
-                # Clean up any pending pairing request on failure
                 if self.manager:
                     self.manager.clear_pairing_request(self.address)
                     self.manager.signal_state_change(self.address)
                 
-                # If BlueZ says device not found, our BLEDevice object is stale (BlueZ garbage collected it).
-                # We must purge it so the next connection attempt triggers a fresh scan.
                 if "not found" in error_str:
                     log.warning("[%s] Device not found in BlueZ. Purging stale scan cache and aborting loop.", self.address)
                     if self.manager and self.address in self.manager._last_scan_devices:
                         del self.manager._last_scan_devices[self.address]
-                    break  # Break out so we don't rapidly loop the stale object
+                    break
                     
             except Exception as e:
                 log.error("[%s] Unhandled exception: %s", self.address, e)
