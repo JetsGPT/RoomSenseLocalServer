@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 import sys
 import asyncio
 import logging
@@ -638,10 +638,23 @@ async def lifespan(app: FastAPI):
             context.verify_mode = ssl.CERT_NONE
         mqtt_kwargs["tls_context"] = context
 
-    async with aiomqtt.Client(**mqtt_kwargs) as client:
-        _global_manager.mqtt_client = client
-        yield
-        await _global_manager.stop_all_peripherals()
+    app_started = False
+    while True:
+        try:
+            async with aiomqtt.Client(**mqtt_kwargs) as client:
+                _global_manager.mqtt_client = client
+                log.info("Successfully connected to MQTT broker.")
+                app_started = True
+                yield
+                await _global_manager.stop_all_peripherals()
+                return
+        except Exception as e:
+            if app_started:
+                log.error(f"Error during app execution or MQTT client crashed: {e}")
+                raise
+            else:
+                log.warning(f"Could not connect to MQTT broker ({e}), retrying in 5 seconds...")
+                await asyncio.sleep(5.0)
 
 app = FastAPI(title="BLE Gateway API", lifespan=lifespan)
 from fastapi.security import APIKeyHeader
@@ -687,9 +700,9 @@ async def connect_device(address: str):
                     content={"status": "pairing_failed", "address": addr, "detail": "Pairing failed - incorrect PIN or device rejected"}
                 )
             
-            # If connection failed, report error immediately
-            if current_status == "error":
-                raise HTTPException(status_code=500, detail="Connection failed during pairing")
+            # If connection failed, DO NOT report immediately but continue polling.
+            # The background connect_and_listen task will sleep for 5s and retry.
+            # We just let it loop here until timeout or success.
             
             # Check if this address is waiting for a PIN
             if has_pending_request:
