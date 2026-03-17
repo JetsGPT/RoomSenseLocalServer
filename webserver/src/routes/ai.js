@@ -149,9 +149,18 @@ router.post('/analyze', requireLogin, async (req, res) => {
         const userId = req.session.user.id;
         console.log(`[AI] Analyze request from user ${userId} for time range: ${timeRange}`);
 
+        // Limit and downsample data to prevent exceeding token limits.
+        // Downsampling ensures we keep a representative view across the entire time range
+        // instead of just taking the last N records, which would skew the analysis.
+        const downsample = (data, maxPoints) => {
+            if (!data || data.length <= maxPoints) return data;
+            const step = Math.ceil(data.length / maxPoints);
+            return data.filter((_, index) => index % step === 0);
+        };
 
-        const trimmedSensorData = sensorData.slice(-500);
-        const trimmedWeatherData = weatherData.slice(-500);
+        const MAX_POINTS = 100;
+        const trimmedSensorData = downsample(sensorData, MAX_POINTS);
+        const trimmedWeatherData = downsample(weatherData, MAX_POINTS);
 
         const analysis = await aiService.analyzeOverview(
             trimmedSensorData,
