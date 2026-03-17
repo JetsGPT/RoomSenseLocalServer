@@ -172,6 +172,45 @@ init_secrets() {
         log_info "BLE Gateway API Key already exists"
     fi
     
+    # --- RoomSense Guided Setup Credentials Output ---
+    # Write initial credentials to a temporary file for the Guided Setup wizard.
+    # The NodeJS backend will securely delete this file once the user completes setup.
+    mkdir -p setup
+    if [ ! -f "setup/credentials.txt" ]; then
+        log_info "Writing initial credentials to setup/credentials.txt for Guided Setup..."
+        cat > setup/credentials.txt <<EOF
+RoomSense Initial Backend Credentials
+===================================
+Please save these credentials in a secure Password Manager.
+This file will be permanently deleted once you complete the Guided Setup.
+
+PostgreSQL Database:
+- User: web_app
+- Password: ${WEBAPP_PASSWORD:-"Already generated"}
+
+InfluxDB Database:
+- Username: admin
+- Password: ${INFLUX_PASSWORD:-"Already generated"}
+- API Token: ${INFLUX_TOKEN:-"Already generated"}
+
+MQTT Broker:
+- Port: 1883 / 8883 (TLS)
+- Password: ${MQTT_PASSWORD:-"Already generated"}
+
+BLE Gateway:
+- API Key: ${BLE_API_KEY:-"Already generated"}
+
+===================================
+EOF
+        # Ensure the webserver container (running as node user, UID 1000) can read and delete this file
+        chmod 600 setup/credentials.txt
+        # Attempt to set ownership if running on a system where uid 1000 is standard (like Raspberry Pi)
+        # We use || true so it doesn't fail on systems where this user doesn't exist on host
+        chown 1000:1000 setup/credentials.txt 2>/dev/null || true
+        chown 1000:1000 setup 2>/dev/null || true
+    fi
+    # ------------------------------------------------
+
     log_info "All secrets initialized successfully!"
 }
 
@@ -205,6 +244,7 @@ EOF
     mkdir -p telegraf
     mkdir -p postgres-init
     mkdir -p bletomqtt
+    mkdir -p setup
     
     # Generate CA-signed certificates if missing
     if [ ! -f "certs/server.key" ] || [ ! -f "certs/server.cert" ] || [ ! -f "certs/rootCA.crt" ]; then

@@ -93,6 +93,7 @@ import weatherRouter from './routes/weather.js';
 import notificationRouter from './routes/notifications.js';
 import aiRouter from './routes/ai.js';
 import settingsRouter from './routes/settings.js';
+import setupRouter from './routes/setup.js';
 import ruleEngine from './services/notifications/RuleEngine.js';
 import sensorDataService from './services/SensorDataService.js';
 import aiService from './services/AiService.js';
@@ -239,6 +240,7 @@ app.use('/api/weather', weatherRouter);
 app.use('/api/notifications', notificationRouter);
 app.use('/api/ai', aiRouter);
 app.use('/api/settings', settingsRouter);
+app.use('/api/setup', setupRouter);
 if (process.env.NODE_ENV === 'development') {
     app.use('/testing', testingRouter);
     console.log('⚠️  Testing routes enabled (development mode only)');

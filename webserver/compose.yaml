@@ -43,6 +43,8 @@ services:
     volumes:
       - ./.env:/webserver/.env:ro
       - ./src/server_identity.json:/webserver/server_identity.json
+      - ./setup:/webserver/setup
+      - ./certs:/webserver/certs:ro
       # Certs volume removed, using secrets
     # Only grant access to secrets this service needs
     secrets:

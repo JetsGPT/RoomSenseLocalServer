@@ -154,6 +154,40 @@ init_secrets() {
         log_info "BLE Gateway API Key already exists"
     fi
     
+    # --- RoomSense Guided Setup Credentials Output ---
+    # Write initial credentials to a temporary file for the Guided Setup wizard.
+    # The NodeJS backend will securely delete this file once the user completes setup.
+    mkdir -p setup
+    if [ ! -f "setup/credentials.txt" ]; then
+        log_info "Writing initial credentials to setup/credentials.txt for Guided Setup..."
+        cat > setup/credentials.txt <<EOF
+RoomSense Initial Backend Credentials
+===================================
+Please save these credentials in a secure Password Manager.
+This file will be permanently deleted once you complete the Guided Setup.
+
+PostgreSQL Database:
+- User: web_app
+- Password: ${WEBAPP_PASSWORD:-"Already generated"}
+
+InfluxDB Database:
+- Username: admin
+- Password: ${INFLUX_PASSWORD:-"Already generated"}
+- API Token: ${INFLUX_TOKEN:-"Already generated"}
+
+MQTT Broker:
+- Port: 1883 / 8883 (TLS)
+- Password: ${MQTT_PASSWORD:-"Already generated"}
+
+BLE Gateway:
+- API Key: ${BLE_API_KEY:-"Already generated"}
+
+===================================
+EOF
+        chmod 600 setup/credentials.txt
+    fi
+    # ------------------------------------------------
+
     log_info "All secrets initialized successfully!"
 }
 
