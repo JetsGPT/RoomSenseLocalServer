@@ -1,8 +1,11 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
+import { requireLogin } from '../auth/auth.js';
 
 const router = express.Router();
+
+router.use(requireLogin);
 
 /**
  * Helper to check if setup is already completed.

@@ -24,6 +24,33 @@ const getCachedData = (cache, key, duration) => {
     return null;
 };
 
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function fetchWeatherJson(apiUrl, label, retries = 1) {
+    let lastError = null;
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+        try {
+            const response = await fetch(apiUrl);
+            if (!response.ok) {
+                throw new Error(`${label} API error: ${response.status} ${response.statusText}`);
+            }
+
+            return await response.json();
+        } catch (error) {
+            lastError = error;
+
+            if (attempt === retries) {
+                break;
+            }
+
+            await delay(400 * (attempt + 1));
+        }
+    }
+
+    throw lastError;
+}
+
 // ========================================================================
 // Helper: get saved location from DB, fall back to DEFAULT_LOCATION
 // ========================================================================
@@ -149,9 +176,7 @@ router.get('/current', authMiddleware, async (req, res) => {
         console.log('Fetching fresh weather data from OpenMeteo');
         const apiUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&hourly=temperature_2m,relative_humidity_2m&timezone=auto&forecast_days=1`;
 
-        const response = await fetch(apiUrl);
-        if (!response.ok) throw new Error(`OpenMeteo API error: ${response.statusText}`);
-        const data = await response.json();
+        const data = await fetchWeatherJson(apiUrl, 'Open-Meteo');
 
         weatherCache.current = { data, timestamp: now, location: locationKey };
         res.json(data);
@@ -186,9 +211,7 @@ router.get('/historical', authMiddleware, async (req, res) => {
         console.log(`Fetching historical weather: ${start_str} to ${end_str}`);
         const apiUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&start_date=${start_str}&end_date=${end_str}&hourly=temperature_2m,relative_humidity_2m&timezone=auto`;
 
-        const response = await fetch(apiUrl);
-        if (!response.ok) throw new Error(`OpenMeteo API error: ${response.statusText}`);
-        const data = await response.json();
+        const data = await fetchWeatherJson(apiUrl, 'Open-Meteo');
 
         weatherCache.historical.set(cacheKey, { data, timestamp: Date.now() });
 
