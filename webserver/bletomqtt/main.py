@@ -202,8 +202,8 @@ class BlueZAgent(ServiceInterface):
 class BLEPeripheral:
     def __init__(self, device: BLEDevice, name: str, mqtt_client: aiomqtt.Client, manager=None):
         self.device = device
-        self.address = device.address
-        self.name = name or "unknown"
+        self.address = normalize_mac_address(device.address)
+        self.name = name or device.name or "unknown"
         self.client: Optional[BleakClient] = None
         self.mqtt = mqtt_client
         self.manager = manager  # Reference to BLEConnectionManager for cleanup
@@ -213,7 +213,9 @@ class BLEPeripheral:
         # Track connection state for API feedback
         self.status = "disconnected"
         # Track if pairing specifically failed - prevents auto-retry which causes rapid connect cycles
-        self._pairing_failed = False 
+        self._pairing_failed = False
+        self._metadata_ready = False
+        self._notifications_started = False
 
     async def _read_metadata(self):
         # NOTE: We intentionally let exceptions bubble up here.
@@ -276,6 +278,9 @@ class BLEPeripheral:
         while not self._stopping:
             try:
                 self.status = "connecting"
+                self._metadata_ready = False
+                self._notifications_started = False
+                self.box_address = None
                 # VERY IMPORTANT: Pass `self.address` (MAC string) to BleakClient on Linux instead of `self.device`.
                 # If we pass `self.device`, Bleak uses the cached DBus path from the scan.
                 # If the user recently "forgot" the device, BlueZ deletes that old DBus path, 
@@ -292,6 +297,8 @@ class BLEPeripheral:
                 def _on_disconnect(_client):
                     log.warning("[%s] Disconnected.", self.address)
                     self.status = "disconnected"
+                    self._metadata_ready = False
+                    self._notifications_started = False
                     if self.manager:
                         self.manager.signal_state_change(self.address)
                 self.client.disconnected_callback = _on_disconnect
@@ -310,6 +317,8 @@ class BLEPeripheral:
                     log.error("[%s] Pairing timed out (no PIN entered within 60 seconds)", self.address)
                     self._pairing_failed = True
                     self.status = "pairing_failed"
+                    self._metadata_ready = False
+                    self._notifications_started = False
                     if self.manager:
                         self.manager.clear_pairing_request(self.address)
                         self.manager.signal_state_change(self.address)
@@ -322,6 +331,8 @@ class BLEPeripheral:
                     log.error("[%s] Pairing failed: %s", self.address, e)
                     self._pairing_failed = True
                     self.status = "pairing_failed"
+                    self._metadata_ready = False
+                    self._notifications_started = False
                     try:
                         await self.client.unpair()
                     except Exception:
@@ -338,10 +349,12 @@ class BLEPeripheral:
                 # Now that we're paired, read the metadata
                 try:
                     await self._read_metadata()
+                    self._metadata_ready = True
                 except Exception as e:
                     log.error("[%s] Metadata read failed after pairing: %s", self.address, e)
                     self._pairing_failed = True
                     self.status = "pairing_failed"
+                    self._metadata_ready = False
                     try:
                         await self.client.unpair()
                     except Exception:
@@ -355,18 +368,20 @@ class BLEPeripheral:
                         self.manager.signal_state_change(self.address)
                     # Don't raise - break out of the loop instead
                     break
-                
-                # NOW we are truly ready and authenticated
-                self.status = "connected"
+
                 if self.manager:
                     self.manager.register_known_device(self.address, self.name, self.box_address)
-                    self.manager.signal_state_change(self.address)
                 
                 # Start notifications - handle failure
                 try:
                     await self.client.start_notify(CUSTOM_SENSOR_CHAR_UUID, self._on_notify)
+                    self._notifications_started = True
+                    self.status = "connected"
+                    if self.manager:
+                        self.manager.signal_state_change(self.address)
                 except Exception as e:
                     log.error("[%s] Failed to start notifications: %s", self.address, e)
+                    self._notifications_started = False
                     self.status = "error"
                     if self.manager:
                         self.manager.signal_state_change(self.address)
@@ -386,9 +401,12 @@ class BLEPeripheral:
                 # asyncio.TimeoutError has an empty string representation `str(e) == ""`
                 log.warning("[%s] BLE Connection timed out (15s). The device is ignoring the request, or BlueZ is stuck.", self.address)
                 self.status = "error"
+                self._metadata_ready = False
+                self._notifications_started = False
                 if self.manager:
                     self.manager.clear_pairing_request(self.address)
                     self.manager.signal_state_change(self.address)
+                break
             except BleakError as e:
                 log.warning("[%s] BLE error: %s", self.address, e)
                 error_str = str(e).lower()
@@ -400,6 +418,8 @@ class BLEPeripheral:
                     self.status = "pairing_failed"
                 else:
                     self.status = "error"
+                self._metadata_ready = False
+                self._notifications_started = False
                 
                 if self.manager:
                     self.manager.clear_pairing_request(self.address)
@@ -409,15 +429,18 @@ class BLEPeripheral:
                     log.warning("[%s] Device not found in BlueZ. Purging stale scan cache and aborting loop.", self.address)
                     if self.manager and self.address in self.manager._last_scan_devices:
                         del self.manager._last_scan_devices[self.address]
-                    break
+                break
                     
             except Exception as e:
                 log.error("[%s] Unhandled exception: %s", self.address, e)
                 self.status = "error"
+                self._metadata_ready = False
+                self._notifications_started = False
                 # Clean up any pending pairing request on failure
                 if self.manager:
                     self.manager.clear_pairing_request(self.address)
                     self.manager.signal_state_change(self.address)
+                break
 
             # Don't retry if pairing failed or we're stopping
             if self._stopping or self._pairing_failed:
@@ -432,12 +455,23 @@ class BLEPeripheral:
 
     async def stop(self):
         self._stopping = True
+        self._notifications_started = False
+        self._metadata_ready = False
         if self.client and self.client.is_connected:
             try: await self.client.disconnect()
             except Exception: pass
         if self._task:
             try: await asyncio.wait_for(self._task, timeout=5.0)
             except Exception: pass
+
+    def is_verified_connected(self) -> bool:
+        return bool(
+            self.client
+            and self.client.is_connected
+            and self.status == "connected"
+            and self._metadata_ready
+            and self._notifications_started
+        )
 
 # ================================================================
 # BLE Connection Manager
@@ -461,11 +495,74 @@ class BLEConnectionManager:
         self._auto_reconnect_task: Optional[asyncio.Task] = None
         self._stopping_auto_reconnect = False
 
+    def normalize_address(self, address: str) -> str:
+        return normalize_mac_address(address)
+
+    def is_connected_peripheral(self, peripheral: Optional[BLEPeripheral]) -> bool:
+        return bool(peripheral and peripheral.is_verified_connected())
+
+    def is_connection_in_progress(self, address: str, peripheral: Optional[BLEPeripheral]) -> bool:
+        if not peripheral or not peripheral._task or peripheral._task.done() or peripheral._stopping:
+            return False
+
+        addr = self.normalize_address(address)
+        if addr in self.pending_pairing_requests:
+            return True
+
+        return peripheral.status in ["connecting", "authenticating", "disconnected"]
+
+    def get_runtime_status(self, address: str) -> str:
+        addr = self.normalize_address(address)
+
+        if addr in self.pending_pairing_requests:
+            return "pin_required"
+
+        peripheral = self.peripherals.get(addr)
+        if not peripheral:
+            return "disconnected"
+
+        if self.is_connected_peripheral(peripheral):
+            return "connected"
+
+        return peripheral.status or "disconnected"
+
+    def list_known_devices(self) -> List[dict]:
+        devices = []
+
+        for addr, device_info in self.known_devices.items():
+            peripheral = self.peripherals.get(addr)
+            runtime_status = self.get_runtime_status(addr)
+            box_address = None
+            if peripheral and peripheral.box_address:
+                box_address = peripheral.box_address
+            elif device_info.get("box_address"):
+                box_address = device_info.get("box_address")
+
+            devices.append({
+                **device_info,
+                "address": addr,
+                "box_address": box_address,
+                "runtime_status": runtime_status,
+                "status": runtime_status,
+                "is_connected": self.is_connected_peripheral(peripheral),
+            })
+
+        return devices
+
     def load_known_devices(self):
         try:
             if os.path.exists(KNOWN_DEVICES_FILE):
                 with open(KNOWN_DEVICES_FILE, "r") as f:
-                    self.known_devices = json.load(f)
+                    loaded_devices = json.load(f)
+                    self.known_devices = {}
+
+                    for key, device_info in loaded_devices.items():
+                        addr = self.normalize_address(device_info.get("address") or key)
+                        self.known_devices[addr] = {
+                            **device_info,
+                            "address": addr,
+                            "box_address": device_info.get("box_address"),
+                        }
                     log.info(f"Loaded {len(self.known_devices)} known devices.")
         except Exception as e:
             log.warning(f"Failed to load known devices: {e}")
@@ -480,7 +577,7 @@ class BLEConnectionManager:
             log.error(f"Failed to save known devices: {e}")
 
     def register_known_device(self, address: str, name: str, box_address: Optional[str] = None):
-        addr = address.upper()
+        addr = self.normalize_address(address)
         self.known_devices[addr] = {
             "address": addr,
             "name": name,
@@ -490,7 +587,7 @@ class BLEConnectionManager:
         self.save_known_devices()
 
     def forget_known_device(self, address: str):
-        addr = address.upper()
+        addr = self.normalize_address(address)
         if addr in self.known_devices:
             del self.known_devices[addr]
             self.save_known_devices()
@@ -506,7 +603,7 @@ class BLEConnectionManager:
                         
                     # Skip if already connected or in progress
                     existing = self.peripherals.get(addr)
-                    if existing and existing.status in ["connected", "connecting", "authenticating", "error"]:
+                    if self.is_connected_peripheral(existing) or self.is_connection_in_progress(addr, existing):
                         continue
                         
                     log.info(f"[Auto-Reconnect] Attempting to reconnect to known device {addr}...")
@@ -567,21 +664,21 @@ class BLEConnectionManager:
 
     def register_pairing_request(self, address: str, future: asyncio.Future):
         # Normalize address
-        addr = address.upper()
+        addr = self.normalize_address(address)
         log.info(f"Registering pairing request for {addr}")
         self.pending_pairing_requests[addr] = future
         # Signal state change for any waiting endpoints
         self.signal_state_change(addr)
 
     def clear_pairing_request(self, address: str):
-        addr = address.upper()
+        addr = self.normalize_address(address)
         if addr in self.pending_pairing_requests:
             del self.pending_pairing_requests[addr]
         # Signal state change for any waiting endpoints
         self.signal_state_change(addr)
 
     def submit_pin(self, address: str, pin: str):
-        addr = address.upper()
+        addr = self.normalize_address(address)
         if addr in self.pending_pairing_requests:
             future = self.pending_pairing_requests[addr]
             if not future.done():
@@ -593,20 +690,20 @@ class BLEConnectionManager:
     
     def get_state_event(self, address: str) -> asyncio.Event:
         """Get or create an event for state change signaling."""
-        addr = address.upper()
+        addr = self.normalize_address(address)
         if addr not in self._state_change_events:
             self._state_change_events[addr] = asyncio.Event()
         return self._state_change_events[addr]
     
     def signal_state_change(self, address: str):
         """Signal that the state for a device has changed."""
-        addr = address.upper()
+        addr = self.normalize_address(address)
         if addr in self._state_change_events:
             self._state_change_events[addr].set()
     
     def clear_state_event(self, address: str):
         """Clear and reset the state event for next wait cycle."""
-        addr = address.upper()
+        addr = self.normalize_address(address)
         if addr in self._state_change_events:
             self._state_change_events[addr].clear()
 
@@ -624,8 +721,9 @@ class BLEConnectionManager:
                 name = d.name or adv.local_name or ""
                 # Simple filter by name
                 if name.upper().startswith(TARGET_NAME_PREFIX.upper()):
-                    self._last_scan_devices[d.address] = d
-                    matches.append({"address": d.address, "name": name})
+                    normalized_address = self.normalize_address(d.address)
+                    self._last_scan_devices[normalized_address] = d
+                    matches.append({"address": normalized_address, "name": name})
             return matches
 
     async def remove_bluez_device(self, address: str):
@@ -634,6 +732,7 @@ class BLEConnectionManager:
         This is important to call before fresh pairing attempts to avoid
         stale keys causing authentication failures.
         """
+        address = self.normalize_address(address)
         if sys.platform != "linux" or not self.bus:
             return
         
@@ -654,45 +753,46 @@ class BLEConnectionManager:
             log.debug(f"[{address}] Could not remove BlueZ device (may not exist): {e}")
 
     async def connect_to_device(self, address: str) -> BLEPeripheral:
-        if address in self.peripherals:
-            existing = self.peripherals[address]
-            is_active = existing._task and not existing._task.done()
-            
-            # If already connected, or in the middle of connecting/authenticating/retrying, return as-is
-            if is_active and existing.status in ["connected", "connecting", "authenticating", "error"]:
-                return existing
-                
-            # Otherwise, stop and remove the stale peripheral to start fresh
-            log.info("[%s] Removing stale peripheral (status=%s, is_active=%s) before reconnection", address, existing.status, is_active)
-            await existing.stop()
-            del self.peripherals[address]
-        
-        # Check if we have the device object from a recent scan
-        device = self._last_scan_devices.get(address)
-        if not device:
-            # Device not in cache - trigger a quick scan to find it
-            log.info(f"[{address}] Not in scan cache, performing quick scan...")
-            await self.scan_for_devices()
-            device = self._last_scan_devices.get(address)
-            if not device:
-                raise ValueError(f"Device {address} not found after scan. Ensure the device is powered on and in range.")
-        
-        # Prepare state event for this connection
-        self.get_state_event(address)  # Ensure event exists
-        self.clear_state_event(address)  # Reset it
+        addr = self.normalize_address(address)
 
-        self.clear_pairing_request(address)
+        if addr in self.peripherals:
+            existing = self.peripherals[addr]
+            is_active = existing._task and not existing._task.done()
+
+            if self.is_connected_peripheral(existing):
+                return existing
+
+            if self.is_connection_in_progress(addr, existing):
+                return existing
+
+            log.info("[%s] Removing stale peripheral (status=%s, is_active=%s) before reconnection", addr, existing.status, is_active)
+            await existing.stop()
+            del self.peripherals[addr]
+
+        device = self._last_scan_devices.get(addr)
+        if not device:
+            log.info(f"[{addr}] Not in scan cache, performing quick scan...")
+            await self.scan_for_devices()
+            device = self._last_scan_devices.get(addr)
+            if not device:
+                raise ValueError(f"Device {addr} not found after scan. Ensure the device is powered on and in range.")
+
+        self.get_state_event(addr)
+        self.clear_state_event(addr)
+
+        self.clear_pairing_request(addr)
 
         conn = BLEPeripheral(device, device.name, self.mqtt_client, manager=self)
-        self.peripherals[address] = conn
+        self.peripherals[addr] = conn
         conn.start()
         return conn
 
     async def disconnect_from_device(self, address: str):
-        addr = normalize_mac_address(address)
+        addr = self.normalize_address(address)
         conn = self.peripherals.pop(addr, None)
         if conn: 
             await conn.stop()
+        self.clear_pairing_request(addr)
         # Clean up state events to prevent memory leak
         if addr in self._state_change_events:
             del self._state_change_events[addr]
@@ -782,9 +882,7 @@ async def connect_device(address: str):
         # Poll for up to 30 seconds using event-based waiting for immediate response
         timeout_end = time.time() + 30.0
         while time.time() < timeout_end:
-            # Check current status - order matters to avoid race conditions
-            current_status = conn.status
-            has_pending_request = addr in _global_manager.pending_pairing_requests
+            current_status = _global_manager.get_runtime_status(addr)
             
             # If pairing failed, report immediately
             if current_status == "pairing_failed":
@@ -798,11 +896,11 @@ async def connect_device(address: str):
             # We just let it loop here until timeout or success.
             
             # Check if this address is waiting for a PIN
-            if has_pending_request:
+            if current_status == "pin_required":
                 return JSONResponse(content={"status": "pin_required", "address": addr})
             
             # Authenticated means PIN was submitted, waiting for result
-            if current_status == "authenticating" and not has_pending_request:
+            if current_status == "authenticating":
                 # PIN was submitted, continue polling for final result
                 pass
             elif current_status == "connected":
@@ -817,7 +915,7 @@ async def connect_device(address: str):
                 _global_manager.clear_state_event(addr)  # Clear AFTER wait to avoid race
         
         # If still connecting but no PIN asked yet, timeout with status
-        return JSONResponse(content={"status": "timeout", "address": addr, "last_status": conn.status})
+        return JSONResponse(content={"status": "timeout", "address": addr, "last_status": _global_manager.get_runtime_status(addr)})
         
     except HTTPException:
         raise  # Re-raise HTTPException as-is
@@ -892,7 +990,7 @@ async def disconnect_device(address: str, forget: bool = False):
 
 @app.get("/known_devices", dependencies=[Depends(get_api_key)])
 async def get_known_devices():
-    return JSONResponse(content=list(_global_manager.known_devices.values()))
+    return JSONResponse(content=_global_manager.list_known_devices())
 
 @app.delete("/known_devices/{address}", dependencies=[Depends(get_api_key)])
 async def forget_known_device(address: str):
@@ -909,8 +1007,9 @@ async def forget_known_device(address: str):
 @app.get("/connections", dependencies=[Depends(get_api_key)])
 async def get_connections():
     return JSONResponse(content=[
-        {"address": a, "name": p.name, "box_name": p.box_address, "status": p.status}
+        {"address": a, "name": p.name, "box_name": p.box_address, "status": "connected"}
         for a, p in _global_manager.peripherals.items()
+        if _global_manager.is_connected_peripheral(p)
     ])
 
 @app.get("/health")

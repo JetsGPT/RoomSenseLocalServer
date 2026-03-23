@@ -16,6 +16,7 @@ const BLE_GATEWAY_URL = process.env.BLE_GATEWAY_URL || 'http://blegateway:8080';
 const SCAN_TIMEOUT_MS = 10000; // 10 seconds max (Python scan is 8s + 2s buffer)
 // Increased to 40s to accommodate the 30s long-poll for BLE pairing
 const REQUEST_TIMEOUT_MS = 40000;
+const normalizeAddress = (address) => address ? address.toUpperCase() : address;
 
 /**
  * Generic error handler for proxying requests to the BLE gateway.
@@ -202,7 +203,6 @@ router.get('/scan', authMiddleware, async (req, res) => {
  */
 router.get('/connections', authMiddleware, async (req, res) => {
     try {
-        // 1. Get raw connections from gateway
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -218,7 +218,6 @@ router.get('/connections', authMiddleware, async (req, res) => {
         clearTimeout(timeoutId);
 
         if (!response.ok) {
-            // Error handling similar to proxyToGateway
             const errorText = await response.text();
             let detail = 'No details provided';
             try { detail = JSON.parse(errorText).detail || detail; } catch (e) { }
@@ -226,15 +225,15 @@ router.get('/connections', authMiddleware, async (req, res) => {
         }
 
         const connections = await response.json();
+        const nowIso = new Date().toISOString();
 
-        // 2. Overlay display names from DB
         if (pool && Array.isArray(connections)) {
             try {
-                const dbResult = await pool.query('SELECT address, name, display_name FROM ble_connections');
+                const dbResult = await pool.query('SELECT address, name, display_name, last_seen FROM ble_connections');
                 const knownDevices = new Map();
                 dbResult.rows.forEach(row => {
                     if (row.address) {
-                        knownDevices.set(row.address.toUpperCase(), row);
+                        knownDevices.set(normalizeAddress(row.address), row);
                     }
                 });
 
@@ -243,48 +242,29 @@ router.get('/connections', authMiddleware, async (req, res) => {
                 connections.forEach(conn => {
                     if (!conn.address) return;
 
-                    const upperAddress = conn.address.toUpperCase();
-
-                    // Default original_name: Use box_name if available (from gateway), else advertised name
-                    if (conn.box_name) {
-                        conn.original_name = conn.box_name;
-                    } else if (!conn.original_name) {
-                        conn.original_name = conn.name;
-                    }
+                    const upperAddress = normalizeAddress(conn.address);
+                    conn.address = upperAddress;
+                    conn.status = conn.status || 'connected';
+                    conn.last_seen = nowIso;
 
                     if (knownDevices.has(upperAddress)) {
                         const known = knownDevices.get(upperAddress);
 
-                        // Sync DB name with box_name if different (and box_name exists)
-                        // This ensures InfluxDB queries (which use box_name) work with the alias resolution
-                        if (conn.box_name && known.name !== conn.box_name) {
-                            console.log(`[BLE] Updating technical name for ${conn.address} from '${known.name}' to '${conn.box_name}'`);
-                            updates.push(pool.query(
-                                'UPDATE ble_connections SET name = $1, updated_at = NOW() WHERE UPPER(address) = $2',
-                                [conn.box_name, upperAddress]
-                            ));
-                            // Update local known object for this response
-                            known.name = conn.box_name;
-                        }
+                        const technicalName = conn.box_name || known.name || conn.name || upperAddress;
+                        conn.original_name = technicalName;
+                        conn.name = known.display_name || technicalName;
 
-                        // original_name: Technical ID (DB > Gateway Box Name > Advertised Name)
-                        if (known.name) {
-                            conn.original_name = known.name;
-                        }
-
-                        // name: Display alias -> Technical ID
-                        if (known.display_name) {
-                            conn.name = known.display_name;
-                        } else if (known.name) {
-                            conn.name = known.name;
-                        } else if (conn.box_name) {
-                            conn.name = conn.box_name;
-                        }
+                        updates.push(pool.query(
+                            `UPDATE ble_connections
+                             SET name = COALESCE($1, name),
+                                 is_active = TRUE,
+                                 last_seen = NOW(),
+                                 updated_at = NOW()
+                             WHERE UPPER(address) = $2`,
+                            [technicalName, upperAddress]
+                        ));
                     } else {
-                        // Device active but not in DB -> Auto-persist
-                        // Use box_name (if available) or existing name or address as a fallback
                         const technicalName = conn.box_name || conn.name || conn.address;
-
                         updates.push(pool.query(
                             `INSERT INTO ble_connections (address, name, connected_at, last_seen, is_active)
                              VALUES ($1, $2, NOW(), NOW(), TRUE)
@@ -292,16 +272,14 @@ router.get('/connections', authMiddleware, async (req, res) => {
                                  is_active = TRUE, 
                                  last_seen = NOW(),
                                  name = COALESCE(ble_connections.name, EXCLUDED.name)`,
-                            [conn.address, technicalName]
+                            [upperAddress, technicalName]
                         ));
 
-                        // Set display props for this response so UI shows it correctly immediately
                         conn.original_name = technicalName;
                         conn.name = technicalName;
                     }
                 });
 
-                // Execute updates in background (don't block response too long, but good to await for error handling)
                 if (updates.length > 0) {
                     Promise.allSettled(updates).then(results => {
                         results.forEach((res, idx) => {
@@ -611,6 +589,41 @@ router.get('/known_devices', authMiddleware, async (req, res) => {
         }
 
         const data = await response.json();
+
+        if (pool && Array.isArray(data)) {
+            try {
+                const dbResult = await pool.query('SELECT address, name, display_name, last_seen FROM ble_connections');
+                const knownDevices = new Map();
+
+                dbResult.rows.forEach(row => {
+                    if (row.address) {
+                        knownDevices.set(normalizeAddress(row.address), row);
+                    }
+                });
+
+                const merged = data.map((device) => {
+                    const upperAddress = normalizeAddress(device.address);
+                    const known = knownDevices.get(upperAddress);
+                    const originalName = known?.name || device.box_address || device.name || upperAddress;
+
+                    return {
+                        ...device,
+                        address: upperAddress,
+                        original_name: originalName,
+                        name: known?.display_name || originalName,
+                        display_name: known?.display_name || null,
+                        last_seen: known?.last_seen || null,
+                        runtime_status: device.runtime_status || device.status || 'disconnected',
+                        is_connected: Boolean(device.is_connected),
+                    };
+                });
+
+                return res.status(200).json(merged);
+            } catch (dbError) {
+                console.error('[BLE] Failed to merge known devices with DB metadata:', dbError);
+            }
+        }
+
         return res.status(200).json(data);
     } catch (error) {
         console.error('Error getting known devices:', error);
@@ -729,12 +742,13 @@ export async function restorePersistedConnections() {
 
     // Restore each connection
     const restorePromises = result.rows.map(async (row) => {
-        const { address, name } = row;
+        const normalizedAddress = normalizeAddress(row.address);
+        const name = row.name;
         try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-            const response = await fetch(`${BLE_GATEWAY_URL}/connect/${encodeURIComponent(address)}`, {
+            const response = await fetch(`${BLE_GATEWAY_URL}/connect/${encodeURIComponent(normalizedAddress)}`, {
                 method: 'POST',
                 signal: controller.signal,
                 headers: {
@@ -745,31 +759,36 @@ export async function restorePersistedConnections() {
 
             clearTimeout(timeoutId);
 
-            if (response.ok) {
-                console.log(`[BLE] Successfully restored connection to ${address} (${name || 'unknown'})`);
-                // Update last_seen timestamp
+            let data = null;
+            try {
+                data = await response.json();
+            } catch {
+                data = null;
+            }
+
+            if (response.ok && data?.status === 'connected') {
+                console.log(`[BLE] Successfully restored connection to ${normalizedAddress} (${name || 'unknown'})`);
                 await pool.query(
-                    `UPDATE ble_connections SET last_seen = NOW() WHERE address = $1`,
-                    [address]
+                    `UPDATE ble_connections SET is_active = TRUE, last_seen = NOW() WHERE UPPER(address) = $1`,
+                    [normalizedAddress]
                 );
             } else {
-                console.warn(`[BLE] Failed to restore connection to ${address}: ${response.status}`);
-                // Mark as inactive if connection fails
+                const failureStatus = data?.status || response.status;
+                console.warn(`[BLE] Failed to restore connection to ${normalizedAddress}: ${failureStatus}`);
                 await pool.query(
-                    `UPDATE ble_connections SET is_active = FALSE WHERE address = $1`,
-                    [address]
+                    `UPDATE ble_connections SET is_active = FALSE WHERE UPPER(address) = $1`,
+                    [normalizedAddress]
                 );
             }
         } catch (error) {
-            console.error(`[BLE] Error restoring connection to ${address}:`, error.message);
-            // Mark as inactive on error
+            console.error(`[BLE] Error restoring connection to ${normalizedAddress}:`, error.message);
             try {
                 await pool.query(
-                    `UPDATE ble_connections SET is_active = FALSE WHERE address = $1`,
-                    [address]
+                    `UPDATE ble_connections SET is_active = FALSE WHERE UPPER(address) = $1`,
+                    [normalizedAddress]
                 );
             } catch (dbError) {
-                console.error(`[BLE] Failed to update database for ${address}:`, dbError);
+                console.error(`[BLE] Failed to update database for ${normalizedAddress}:`, dbError);
             }
         }
     });

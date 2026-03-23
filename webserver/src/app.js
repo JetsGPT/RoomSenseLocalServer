@@ -21,6 +21,8 @@ loadEnvironment();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const STATIC_BUILD_FOLDER = path.join(__dirname, 'public');
+const STATIC_INDEX_FILE = path.join(STATIC_BUILD_FOLDER, 'index.html');
+const IMMUTABLE_ASSET_PATTERN = /-[A-Za-z0-9_-]{6,}\.(?:js|css|mjs|map|svg|png|jpg|jpeg|gif|webp|ico)$/i;
 
 const { Pool } = pg;
 const PgSession = connectPgSimple(session);
@@ -94,6 +96,7 @@ import notificationRouter from './routes/notifications.js';
 import aiRouter from './routes/ai.js';
 import settingsRouter from './routes/settings.js';
 import setupRouter from './routes/setup.js';
+import systemRouter from './routes/system.js';
 import ruleEngine from './services/notifications/RuleEngine.js';
 import sensorDataService from './services/SensorDataService.js';
 import aiService from './services/AiService.js';
@@ -102,6 +105,11 @@ app.use(express.json());
 
 // Make pool available to middlewares
 app.locals.pool = pool;
+app.locals.hasFrontendBuild = () => fs.existsSync(STATIC_INDEX_FILE);
+
+if (!app.locals.hasFrontendBuild()) {
+    console.warn(`[Static] Frontend build missing at ${STATIC_INDEX_FILE}`);
+}
 
 // Optionally trust proxy for correct client IPs
 if (process.env.RATE_LIMIT_TRUST_PROXY === '1' || process.env.TRUST_PROXY === '1') {
@@ -156,7 +164,24 @@ app.use(cors({
 
 
 
-app.use(express.static(STATIC_BUILD_FOLDER));
+app.use(express.static(STATIC_BUILD_FOLDER, {
+    index: false,
+    setHeaders: (res, filePath) => {
+        const fileName = path.basename(filePath);
+
+        if (fileName === 'index.html' || filePath.endsWith('.html')) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            return;
+        }
+
+        if (IMMUTABLE_ASSET_PATTERN.test(fileName)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+            return;
+        }
+
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+    }
+}));
 // session
 // app.set('trust proxy', 1);
 app.use(
@@ -218,7 +243,11 @@ app.use('/api', (req, res, next) => {
 
 // Generic Health Check (for Docker/K8s/Load Balancers)
 app.get('/api/health', (req, res) => {
-    res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+    res.status(200).json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        frontendBuildPresent: app.locals.hasFrontendBuild(),
+    });
 });
 
 // Initialize database pool for device router and floor plans router
@@ -241,6 +270,7 @@ app.use('/api/notifications', notificationRouter);
 app.use('/api/ai', aiRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/setup', setupRouter);
+app.use('/api/system', systemRouter);
 if (process.env.NODE_ENV === 'development') {
     app.use('/testing', testingRouter);
     console.log('⚠️  Testing routes enabled (development mode only)');
@@ -248,7 +278,12 @@ if (process.env.NODE_ENV === 'development') {
 
 
 app.get('*', (req, res) => {
-    res.sendFile(path.join(STATIC_BUILD_FOLDER, 'index.html'));
+    if (!app.locals.hasFrontendBuild()) {
+        return res.status(503).type('text/plain').send('Frontend build is missing from the backend static directory.');
+    }
+
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.sendFile(STATIC_INDEX_FILE);
 });
 
 // Error handler for CSRF
