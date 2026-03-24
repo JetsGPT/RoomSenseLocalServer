@@ -22,7 +22,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const STATIC_BUILD_FOLDER = path.join(__dirname, 'public');
 const STATIC_INDEX_FILE = path.join(STATIC_BUILD_FOLDER, 'index.html');
+const STATIC_ASSETS_FOLDER = path.join(STATIC_BUILD_FOLDER, 'assets');
 const IMMUTABLE_ASSET_PATTERN = /-[A-Za-z0-9_-]{6,}\.(?:js|css|mjs|map|svg|png|jpg|jpeg|gif|webp|ico)$/i;
+const ROOT_CA_SECRET_PATH = '/run/secrets/ssl_root_ca';
 
 const { Pool } = pg;
 const PgSession = connectPgSimple(session);
@@ -111,6 +113,22 @@ if (!app.locals.hasFrontendBuild()) {
     console.warn(`[Static] Frontend build missing at ${STATIC_INDEX_FILE}`);
 }
 
+function setStaticCacheHeaders(res, filePath) {
+    const fileName = path.basename(filePath);
+
+    if (fileName === 'index.html' || filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        return;
+    }
+
+    if (IMMUTABLE_ASSET_PATTERN.test(fileName)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        return;
+    }
+
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+}
+
 // Optionally trust proxy for correct client IPs
 if (process.env.RATE_LIMIT_TRUST_PROXY === '1' || process.env.TRUST_PROXY === '1') {
     app.set('trust proxy', 1);
@@ -162,25 +180,19 @@ app.use(cors({
     optionsSuccessStatus: 200
 }));
 
+app.get('/ca.crt', (req, res) => {
+    if (!fs.existsSync(ROOT_CA_SECRET_PATH)) {
+        return res.status(404).type('text/plain').send('RoomSense root certificate is not available.');
+    }
+
+    res.download(ROOT_CA_SECRET_PATH, 'roomsense-rootCA.crt');
+});
+
 
 
 app.use(express.static(STATIC_BUILD_FOLDER, {
     index: false,
-    setHeaders: (res, filePath) => {
-        const fileName = path.basename(filePath);
-
-        if (fileName === 'index.html' || filePath.endsWith('.html')) {
-            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-            return;
-        }
-
-        if (IMMUTABLE_ASSET_PATTERN.test(fileName)) {
-            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-            return;
-        }
-
-        res.setHeader('Cache-Control', 'public, max-age=3600');
-    }
+    setHeaders: setStaticCacheHeaders
 }));
 // session
 // app.set('trust proxy', 1);
@@ -219,10 +231,12 @@ const csrfProtection = csurf({
     }
 });
 
-// Apply CSRF to all API routes, EXCLUDING health endpoints
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+// Apply CSRF to state-changing API routes only.
 app.use('/api', (req, res, next) => {
     const skipPaths = ['/health', '/devices/health', '/sensors', '/sensors/'];
-    if (skipPaths.includes(req.path)) return next();
+    if (SAFE_METHODS.has(req.method) || skipPaths.includes(req.path)) return next();
     csrfProtection(req, res, next);
 });
 
@@ -276,6 +290,23 @@ if (process.env.NODE_ENV === 'development') {
     console.log('⚠️  Testing routes enabled (development mode only)');
 }
 
+
+app.get('/assets/*', (req, res) => {
+    const requestedAsset = req.params[0] || '';
+    const resolvedAssetPath = path.resolve(STATIC_ASSETS_FOLDER, requestedAsset);
+    const assetsRoot = `${STATIC_ASSETS_FOLDER}${path.sep}`;
+
+    if (!requestedAsset || (resolvedAssetPath !== STATIC_ASSETS_FOLDER && !resolvedAssetPath.startsWith(assetsRoot))) {
+        return res.status(400).type('text/plain').send('Invalid asset path.');
+    }
+
+    if (!fs.existsSync(resolvedAssetPath)) {
+        return res.status(404).type('text/plain').send('Static asset not found.');
+    }
+
+    setStaticCacheHeaders(res, resolvedAssetPath);
+    res.sendFile(resolvedAssetPath);
+});
 
 app.get('*', (req, res) => {
     if (!app.locals.hasFrontendBuild()) {
