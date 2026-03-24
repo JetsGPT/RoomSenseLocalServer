@@ -16,6 +16,7 @@ This directory contains all documentation for the RoomSense Local Server project
 - **SECURITY_ANALYSIS.md** - Security analysis and recommendations
 - **README_ENV.md** - Environment variables guide
 - **ENV_RASPBERRY_PI.md** - Raspberry Pi specific environment setup
+- **HOST_CONTROL.md** - Raspberry Pi reboot and Wi-Fi host helper
 - **BLE_DOCKER_SOLUTIONS.md** - BLE Gateway Docker solutions
 - **FIRST_BOOT_SETUP.md** - First boot setup guide (legacy, may be outdated)
 - **INITIALIZATION.md** - Initialization documentation (legacy, may be outdated)
@@ -26,4 +27,3 @@ This directory contains all documentation for the RoomSense Local Server project
 
 For the most up-to-date information on secure setup, see:
 - **[SECURE_SETUP.md](./SECURE_SETUP.md)** - Complete secure setup guide
-

@@ -78,6 +78,15 @@ All other variables have sensible defaults and can be left as-is for basic setup
 - **TRUST_PROXY**: Set to `1` if behind reverse proxy
 - **RATE_LIMIT_TRUST_PROXY**: Set to `1` if behind proxy for rate limiting
 
+### Host Control
+- **HOST_CONTROL_SOCKET**: Unix socket path inside the backend container
+  - Default: `/run/roomsense-hostctl/hostctl.sock`
+  - Used for Raspberry Pi reboot and Wi-Fi switching
+- **HOST_CONTROL_TIMEOUT_MS**: Timeout for helper requests
+  - Default: `4000`
+- **HOST_CONTROL_SCAN_TIMEOUT_MS**: Timeout for Wi-Fi scans
+  - Default: `12000`
+
 ## First-Time Setup Checklist
 
 1. ✅ Generate `SESSION_SECRET`
@@ -133,4 +142,3 @@ curl http://localhost:8080/scan
 ### "Session errors"
 - Ensure `SESSION_SECRET` is set
 - Restart webserver after changing `SESSION_SECRET`
-

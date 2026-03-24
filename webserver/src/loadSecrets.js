@@ -94,6 +94,9 @@ export function loadEnvironment() {
         TRUST_PROXY: '0',
         RATE_LIMIT_TRUST_PROXY: '0',
         PERM_CACHE_MS: '30000',
+        HOST_CONTROL_SOCKET: '/run/roomsense-hostctl/hostctl.sock',
+        HOST_CONTROL_TIMEOUT_MS: '4000',
+        HOST_CONTROL_SCAN_TIMEOUT_MS: '12000',
     };
 
     for (const [key, value] of Object.entries(defaults)) {
@@ -109,4 +112,3 @@ export function loadEnvironment() {
 
     console.log('✓ Environment variables loaded and validated');
 }
-

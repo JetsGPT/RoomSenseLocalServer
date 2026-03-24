@@ -86,6 +86,43 @@ function sanitizeQueryParams(req) {
     return sanitized;
 }
 
+function normalizeRequestedSensorBox(value) {
+    if (typeof value !== 'string') {
+        return '';
+    }
+
+    return value.trim().substring(0, 255);
+}
+
+async function resolveRequestedSensorBox(req, requestedBox) {
+    const normalizedBox = normalizeRequestedSensorBox(requestedBox);
+    if (!normalizedBox) {
+        return null;
+    }
+
+    const pool = req.app.locals.pool;
+    if (pool) {
+        try {
+            const result = await pool.query(
+                `SELECT name
+                 FROM ble_connections
+                 WHERE LOWER(display_name) = LOWER($1)
+                    OR LOWER(name) = LOWER($1)
+                 LIMIT 1`,
+                [normalizedBox]
+            );
+
+            if (result.rows.length > 0 && result.rows[0].name) {
+                return sanitizeSensorBox(result.rows[0].name);
+            }
+        } catch (dbError) {
+            console.error('Error resolving sensor box alias:', dbError);
+        }
+    }
+
+    return sanitizeSensorBox(normalizedBox);
+}
+
 // ============================================================================
 // Data Retrieval Endpoints
 // ============================================================================
@@ -94,10 +131,21 @@ function sanitizeQueryParams(req) {
  * GET /api/sensors/data
  * Get all sensor data with optional filtering
  */
-router.get('/data', requireLogin, (req, res) => {
+router.get('/data', requireLogin, async (req, res) => {
     console.log('A read attempt has been made');
 
     const sanitized = sanitizeQueryParams(req);
+    if (req.query.sensor_box) {
+        const resolvedBox = await resolveRequestedSensorBox(req, req.query.sensor_box);
+        if (!resolvedBox) {
+            logSecurityWarning(req, 'sensor_box', req.query.sensor_box, 'Invalid or unknown sensor box');
+            return res.status(400).json({
+                error: 'Invalid sensor_box format',
+                detail: 'sensor_box must be a known display name or a valid technical ID'
+            });
+        }
+        sanitized.sensor_box = resolvedBox;
+    }
 
     const fluxQuery = buildSecureFluxQuery(bucket, sanitized);
     executeQuery(fluxQuery, res, 'A read attempt has succeeded');
@@ -111,12 +159,12 @@ router.get('/data/box/:sensor_box', requireLogin, async (req, res) => {
     const { sensor_box } = req.params;
     const { sensor_type, start_time, end_time, limit, sort } = req.query;
 
-    const sanitizedBox = sanitizeSensorBox(sensor_box);
-    if (!sanitizedBox) {
+    const technicalName = await resolveRequestedSensorBox(req, sensor_box);
+    if (!technicalName) {
         logSecurityWarning(req, 'sensor_box', sensor_box, 'Invalid characters or format');
         return res.status(400).json({
             error: 'Invalid sensor_box format',
-            detail: 'sensor_box must contain only alphanumeric characters, underscores, hyphens, and dots'
+            detail: 'sensor_box must be a known display name or a valid technical ID'
         });
     }
 
@@ -131,27 +179,7 @@ router.get('/data/box/:sensor_box', requireLogin, async (req, res) => {
         logSecurityWarning(req, 'sensor_type', sensor_type, 'Invalid characters or format');
     }
 
-    // Resolve display_name to technical name if possible
-    let technicalName = sanitizedBox;
-    const pool = req.app.locals.pool;
-
-    if (pool) {
-        try {
-            // Check if the provided box name is actually a display name
-            const result = await pool.query(
-                'SELECT name FROM ble_connections WHERE display_name = $1',
-                [sanitizedBox]
-            );
-            if (result.rows.length > 0 && result.rows[0].name) {
-                technicalName = result.rows[0].name;
-                console.log(`Resolved alias '${sanitizedBox}' to technical ID '${technicalName}'`);
-            }
-        } catch (dbError) {
-            console.error('Error resolving sensor box alias:', dbError);
-        }
-    }
-
-    console.log(`Getting data for sensor box: ${technicalName} (requested: ${sanitizedBox})`);
+    console.log(`Getting data for sensor box: ${technicalName} (requested: ${sensor_box})`);
 
     const fluxQuery = buildSecureFluxQuery(bucket, {
         sensor_box: technicalName,
@@ -172,27 +200,9 @@ router.get('/data/box/:sensor_box', requireLogin, async (req, res) => {
 router.get('/data/mold-risk/:sensor_box', requireLogin, async (req, res) => {
     const { sensor_box } = req.params;
 
-    // Sanitize input
-    const sanitizedBox = sanitizeSensorBox(sensor_box);
-    if (!sanitizedBox) {
+    const technicalName = await resolveRequestedSensorBox(req, sensor_box);
+    if (!technicalName) {
         return res.status(400).json({ error: 'Invalid sensor_box format' });
-    }
-
-    // Resolve alias
-    let technicalName = sanitizedBox;
-    const pool = req.app.locals.pool;
-    if (pool) {
-        try {
-            const result = await pool.query(
-                'SELECT name FROM ble_connections WHERE display_name = $1',
-                [sanitizedBox]
-            );
-            if (result.rows.length > 0 && result.rows[0].name) {
-                technicalName = result.rows[0].name;
-            }
-        } catch (error) {
-            console.error('Error resolving alias:', error);
-        }
     }
 
     try {
@@ -208,7 +218,7 @@ router.get('/data/mold-risk/:sensor_box', requireLogin, async (req, res) => {
  * GET /api/sensors/data/type/:sensor_type
  * Get data filtered by sensor type
  */
-router.get('/data/type/:sensor_type', requireLogin, (req, res) => {
+router.get('/data/type/:sensor_type', requireLogin, async (req, res) => {
     const { sensor_type } = req.params;
     const { sensor_box, start_time, end_time, limit, sort } = req.query;
 
@@ -223,7 +233,7 @@ router.get('/data/type/:sensor_type', requireLogin, (req, res) => {
     }
 
     // Sanitize optional query parameters
-    const sanitizedBox = sensor_box ? sanitizeSensorBox(sensor_box) : null;
+    const sanitizedBox = sensor_box ? await resolveRequestedSensorBox(req, sensor_box) : null;
     const sanitizedStart = sanitizeFluxTime(start_time, '-24h');
     const sanitizedEnd = sanitizeFluxTime(end_time, 'now()');
     const sanitizedLimit = sanitizeLimit(limit);
@@ -231,6 +241,10 @@ router.get('/data/type/:sensor_type', requireLogin, (req, res) => {
 
     if (sensor_box && !sanitizedBox) {
         logSecurityWarning(req, 'sensor_box', sensor_box, 'Invalid characters or format');
+        return res.status(400).json({
+            error: 'Invalid sensor_box format',
+            detail: 'sensor_box must be a known display name or a valid technical ID'
+        });
     }
 
     console.log(`Getting data for sensor type: ${sanitizedType}`);
@@ -256,10 +270,10 @@ router.get('/data/aggregated/:sensor_box/:sensor_type', requireLogin, async (req
     const { start_time, end_time, aggregation } = req.query;
 
     // Validate required path param
-    const sanitizedBox = sanitizeSensorBox(sensor_box);
     const sanitizedType = sanitizeSensorType(sensor_type);
+    const technicalName = await resolveRequestedSensorBox(req, sensor_box);
 
-    if (!sanitizedBox || !sanitizedType) {
+    if (!technicalName || !sanitizedType) {
         return res.status(400).json({ error: 'Invalid sensor_box or sensor_type format' });
     }
 
@@ -269,21 +283,6 @@ router.get('/data/aggregated/:sensor_box/:sensor_type', requireLogin, async (req
     // Whitelist aggregation function
     const validAggregations = ['mean', 'min', 'max', 'sum', 'count'];
     const sanitizedAggregation = validAggregations.includes(aggregation) ? aggregation : 'mean';
-
-    // Resolve aliases
-    let technicalName = sanitizedBox;
-    const pool = req.app.locals.pool;
-    if (pool) {
-        try {
-            const result = await pool.query(
-                'SELECT name FROM ble_connections WHERE display_name = $1',
-                [sanitizedBox]
-            );
-            if (result.rows.length > 0 && result.rows[0].name) {
-                technicalName = result.rows[0].name;
-            }
-        } catch (e) { console.error('Error resolving alias', e); }
-    }
 
     console.log(`Getting aggregated (${sanitizedAggregation}) data for ${technicalName}:${sanitizedType}`);
 
@@ -408,10 +407,21 @@ router.get('/types', requireLogin, (req, res) => {
  * GET /api/sensors/data/export/csv
  * Export sensor data as CSV with optional filtering
  */
-router.get('/data/export/csv', requireLogin, (req, res) => {
+router.get('/data/export/csv', requireLogin, async (req, res) => {
     console.log('CSV export requested');
 
     const sanitized = sanitizeQueryParams(req);
+    if (req.query.sensor_box) {
+        const resolvedBox = await resolveRequestedSensorBox(req, req.query.sensor_box);
+        if (!resolvedBox) {
+            logSecurityWarning(req, 'sensor_box', req.query.sensor_box, 'Invalid or unknown sensor box');
+            return res.status(400).json({
+                error: 'Invalid sensor_box format',
+                detail: 'sensor_box must be a known display name or a valid technical ID'
+            });
+        }
+        sanitized.sensor_box = resolvedBox;
+    }
     const fluxQuery = buildSecureFluxQuery(bucket, sanitized);
 
     const data = [];

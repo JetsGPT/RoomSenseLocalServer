@@ -45,6 +45,7 @@ services:
       - ./src/server_identity.json:/webserver/server_identity.json
       - ./setup:/webserver/setup
       - ./certs:/webserver/certs:ro
+      - ./host-control-runtime:/run/roomsense-hostctl
       # Certs volume removed, using secrets
     # Only grant access to secrets this service needs
     secrets:
@@ -74,6 +75,9 @@ services:
       TRUST_PROXY: ${TRUST_PROXY:-0}
       RATE_LIMIT_TRUST_PROXY: ${RATE_LIMIT_TRUST_PROXY:-0}
       PERM_CACHE_MS: ${PERM_CACHE_MS:-30000}
+      HOST_CONTROL_SOCKET: ${HOST_CONTROL_SOCKET:-/run/roomsense-hostctl/hostctl.sock}
+      HOST_CONTROL_TIMEOUT_MS: ${HOST_CONTROL_TIMEOUT_MS:-4000}
+      HOST_CONTROL_SCAN_TIMEOUT_MS: ${HOST_CONTROL_SCAN_TIMEOUT_MS:-12000}
       VIRTUAL_HOST: roomsense.local
       VIRTUAL_PORT: 8081
       VIRTUAL_PROTO: https

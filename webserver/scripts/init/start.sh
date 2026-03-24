@@ -33,6 +33,35 @@ log_step() {
     echo -e "${BLUE}[STEP]${NC} $1"
 }
 
+install_host_control_helper() {
+    if [ "$(uname -s)" != "Linux" ]; then
+        log_info "Skipping host control helper installation on non-Linux host"
+        return 0
+    fi
+
+    if ! command -v systemctl >/dev/null 2>&1; then
+        log_warn "systemd not available; Wi-Fi/reboot host helper will not be installed"
+        return 0
+    fi
+
+    if ! command -v node >/dev/null 2>&1; then
+        log_warn "Node.js is not available on the host; Wi-Fi/reboot host helper will not be installed"
+        return 0
+    fi
+
+    if [ ! -f "scripts/host-control/install-hostctl.sh" ]; then
+        log_warn "Host control installer script is missing; skipping helper installation"
+        return 0
+    fi
+
+    log_step "Installing RoomSense host control helper..."
+    if bash ./scripts/host-control/install-hostctl.sh; then
+        log_info "Host control helper is ready"
+    else
+        log_warn "Host control helper installation failed; reboot/Wi-Fi control will be unavailable"
+    fi
+}
+
 # Check if Docker is available
 check_docker() {
     if ! command -v docker >/dev/null 2>&1; then
@@ -311,6 +340,9 @@ main() {
     
     # Check and create required mount points
     check_mounts
+
+    # Install the host-side helper before deploying containers
+    install_host_control_helper
     
     echo ""
     log_step "Building images (if needed)..."
@@ -342,4 +374,3 @@ main() {
 }
 
 main "$@"
-
