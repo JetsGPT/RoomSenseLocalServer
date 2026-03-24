@@ -12,6 +12,10 @@ import chatService from '../services/ChatService.js';
 
 const router = express.Router();
 
+function isObjectPayload(value) {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
 // ========================================================================
 // Chat
 // ========================================================================
@@ -127,7 +131,7 @@ router.post('/chat', requireLogin, async (req, res) => {
  * Analyze sensor and weather data over a specific time range to generate insights.
  *
  * Request body:
- *   { sensorData: Array, weatherData: Array, timeRange: string }
+ *   { sensorData: Array|Object, weatherData: Array|Object, timeRange: string }
  *
  * Response:
  *   { analysis: string }
@@ -136,11 +140,11 @@ router.post('/analyze', requireLogin, async (req, res) => {
     try {
         const { sensorData, weatherData, timeRange } = req.body;
 
-        if (!sensorData || !Array.isArray(sensorData)) {
-            return res.status(400).json({ error: 'sensorData must be an array' });
+        if (!sensorData || (!Array.isArray(sensorData) && !isObjectPayload(sensorData))) {
+            return res.status(400).json({ error: 'sensorData must be an array or summary object' });
         }
-        if (!weatherData || !Array.isArray(weatherData)) {
-            return res.status(400).json({ error: 'weatherData must be an array' });
+        if (!weatherData || (!Array.isArray(weatherData) && !isObjectPayload(weatherData))) {
+            return res.status(400).json({ error: 'weatherData must be an array or summary object' });
         }
         if (!timeRange) {
             return res.status(400).json({ error: 'timeRange is required' });
@@ -149,22 +153,9 @@ router.post('/analyze', requireLogin, async (req, res) => {
         const userId = req.session.user.id;
         console.log(`[AI] Analyze request from user ${userId} for time range: ${timeRange}`);
 
-        // Limit and downsample data to prevent exceeding token limits.
-        // Downsampling ensures we keep a representative view across the entire time range
-        // instead of just taking the last N records, which would skew the analysis.
-        const downsample = (data, maxPoints) => {
-            if (!data || data.length <= maxPoints) return data;
-            const step = Math.ceil(data.length / maxPoints);
-            return data.filter((_, index) => index % step === 0);
-        };
-
-        const MAX_POINTS = 100;
-        const trimmedSensorData = downsample(sensorData, MAX_POINTS);
-        const trimmedWeatherData = downsample(weatherData, MAX_POINTS);
-
         const analysis = await aiService.analyzeOverview(
-            trimmedSensorData,
-            trimmedWeatherData,
+            sensorData,
+            weatherData,
             timeRange
         );
 

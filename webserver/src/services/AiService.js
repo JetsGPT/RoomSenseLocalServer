@@ -17,6 +17,8 @@ import sensorDataService from './SensorDataService.js';
 
 // Maximum conversation turns to keep (user + model turns)
 const MAX_HISTORY_TURNS = 40;
+const MAX_OVERVIEW_SENSOR_SAMPLE_POINTS = 8;
+const MAX_OVERVIEW_WEATHER_SAMPLE_POINTS = 12;
 
 class AiService {
     constructor() {
@@ -441,7 +443,9 @@ INSTRUCTIONS:
             throw new Error('AI service not initialized. An admin must set the Gemini API key in Settings.');
         }
 
-        if (!sensorData || sensorData.length === 0) {
+        const { sensorSummary, weatherSummary } = this._normalizeOverviewInput(sensorData, weatherData);
+
+        if (!sensorSummary || sensorSummary.sensorSeriesCount === 0) {
             return "Not enough sensor data available to generate meaningful insights for this time range. The sensors may have just started recording or the selected time range might be too short to show patterns.";
         }
 
@@ -457,15 +461,16 @@ CRITICAL INSTRUCTIONS:
 3. Compare indoor conditions vs outdoor weather where relevant (e.g., "Indoor humidity rose after it started raining").
 4. Suggest POSSIBLE CAUSES for detected anomalies or trends (e.g., "The sudden temperature drop in the living room might be due to an open window").
 5. Keep your response concise, structured, and easy to read. Use markdown formatting (bullet points, bold text).
-6. Do not include a conversational preamble or postscript (e.g., don't say "Here is your analysis" or "Let me know if you need anything else"). Output ONLY the analysis.`;
+6. The provided JSON is a compact summary. "sample" arrays are representative trend points, not the full raw history.
+7. Do not include a conversational preamble or postscript (e.g., don't say "Here is your analysis" or "Let me know if you need anything else"). Output ONLY the analysis.`;
 
-        const prompt = `Analyze the following home sensor and weather data for the time period: ${timeRange}.
+        const prompt = `Analyze the following summarized home sensor and weather data for the time period: ${timeRange}.
 
-Sensor Data (JSON):
-${JSON.stringify(sensorData)}
+Sensor Summary (JSON):
+${JSON.stringify(sensorSummary)}
 
-Weather Data (JSON):
-${JSON.stringify(weatherData)}
+Weather Summary (JSON):
+${JSON.stringify(weatherSummary)}
 
 Provide your analytical insights now.`;
 
@@ -481,6 +486,277 @@ Provide your analytical insights now.`;
         // Extract final text response
         const textResponse = (typeof response.text === 'string') ? response.text : (response.text ? String(response.text) : 'Unable to generate analysis.');
         return textResponse;
+    }
+
+    _normalizeOverviewInput(sensorData, weatherData) {
+        const sensorSummary = Array.isArray(sensorData)
+            ? this._summarizeSensorReadings(sensorData)
+            : this._sanitizeSensorSummary(sensorData);
+        const weatherSummary = Array.isArray(weatherData)
+            ? this._summarizeWeatherReadings(weatherData)
+            : this._sanitizeWeatherSummary(weatherData);
+
+        return { sensorSummary, weatherSummary };
+    }
+
+    _summarizeSensorReadings(sensorData) {
+        const seriesMap = new Map();
+
+        for (const reading of sensorData || []) {
+            const boxId = typeof reading?.sensor_box === 'string' ? reading.sensor_box : '';
+            const sensorType = typeof reading?.sensor_type === 'string' ? reading.sensor_type : '';
+            const value = this._toFiniteNumber(reading?.value);
+
+            if (!boxId || !sensorType || value == null || !reading?.timestamp) {
+                continue;
+            }
+
+            const key = `${boxId}::${sensorType}`;
+            if (!seriesMap.has(key)) {
+                seriesMap.set(key, {
+                    boxId,
+                    sensorType,
+                    points: [],
+                });
+            }
+
+            seriesMap.get(key).points.push({
+                timestamp: reading.timestamp,
+                value,
+            });
+        }
+
+        const boxMap = new Map();
+
+        for (const series of seriesMap.values()) {
+            const summary = this._summarizeAnalysisPoints(series.points, MAX_OVERVIEW_SENSOR_SAMPLE_POINTS);
+            if (!summary) {
+                continue;
+            }
+
+            if (!boxMap.has(series.boxId)) {
+                boxMap.set(series.boxId, {
+                    boxId: series.boxId,
+                    sensors: [],
+                });
+            }
+
+            boxMap.get(series.boxId).sensors.push({
+                sensorType: series.sensorType,
+                ...summary,
+            });
+        }
+
+        const boxes = Array.from(boxMap.values())
+            .map((box) => ({
+                ...box,
+                sensors: box.sensors.sort((left, right) => left.sensorType.localeCompare(right.sensorType)),
+            }))
+            .sort((left, right) => left.boxId.localeCompare(right.boxId));
+
+        return {
+            totalReadings: Array.isArray(sensorData) ? sensorData.length : 0,
+            boxCount: boxes.length,
+            sensorSeriesCount: boxes.reduce((count, box) => count + box.sensors.length, 0),
+            boxes,
+        };
+    }
+
+    _sanitizeSensorSummary(sensorSummary) {
+        const boxes = Array.isArray(sensorSummary?.boxes)
+            ? sensorSummary.boxes
+                .map((box) => {
+                    const boxId = typeof box?.boxId === 'string' ? box.boxId : '';
+                    const sensors = Array.isArray(box?.sensors)
+                        ? box.sensors
+                            .map((sensor) => {
+                                const sensorType = typeof sensor?.sensorType === 'string' ? sensor.sensorType : '';
+                                const summary = this._sanitizeSeriesSummary(sensor, MAX_OVERVIEW_SENSOR_SAMPLE_POINTS);
+
+                                if (!sensorType || !summary) {
+                                    return null;
+                                }
+
+                                return {
+                                    sensorType,
+                                    ...summary,
+                                };
+                            })
+                            .filter(Boolean)
+                        : [];
+
+                    if (!boxId || sensors.length === 0) {
+                        return null;
+                    }
+
+                    return {
+                        boxId,
+                        sensors: sensors.sort((left, right) => left.sensorType.localeCompare(right.sensorType)),
+                    };
+                })
+                .filter(Boolean)
+                .sort((left, right) => left.boxId.localeCompare(right.boxId))
+            : [];
+
+        return {
+            totalReadings: this._toFiniteNumber(sensorSummary?.totalReadings) || 0,
+            boxCount: boxes.length,
+            sensorSeriesCount: boxes.reduce((count, box) => count + box.sensors.length, 0),
+            boxes,
+        };
+    }
+
+    _summarizeWeatherReadings(weatherData) {
+        const temperaturePoints = [];
+        const humidityPoints = [];
+
+        for (const reading of weatherData || []) {
+            if (!reading?.timestamp) {
+                continue;
+            }
+
+            const temperature = this._toFiniteNumber(reading?.outdoor_temp);
+            const humidity = this._toFiniteNumber(reading?.outdoor_humidity);
+
+            if (temperature != null) {
+                temperaturePoints.push({ timestamp: reading.timestamp, value: temperature });
+            }
+
+            if (humidity != null) {
+                humidityPoints.push({ timestamp: reading.timestamp, value: humidity });
+            }
+        }
+
+        return {
+            totalReadings: Array.isArray(weatherData) ? weatherData.length : 0,
+            metrics: {
+                outdoor_temp: this._summarizeAnalysisPoints(temperaturePoints, MAX_OVERVIEW_WEATHER_SAMPLE_POINTS),
+                outdoor_humidity: this._summarizeAnalysisPoints(humidityPoints, MAX_OVERVIEW_WEATHER_SAMPLE_POINTS),
+            }
+        };
+    }
+
+    _sanitizeWeatherSummary(weatherSummary) {
+        return {
+            totalReadings: this._toFiniteNumber(weatherSummary?.totalReadings) || 0,
+            metrics: {
+                outdoor_temp: this._sanitizeSeriesSummary(weatherSummary?.metrics?.outdoor_temp, MAX_OVERVIEW_WEATHER_SAMPLE_POINTS),
+                outdoor_humidity: this._sanitizeSeriesSummary(weatherSummary?.metrics?.outdoor_humidity, MAX_OVERVIEW_WEATHER_SAMPLE_POINTS),
+            }
+        };
+    }
+
+    _sanitizeSeriesSummary(summary, maxSamplePoints) {
+        if (!summary || typeof summary !== 'object') {
+            return null;
+        }
+
+        const sample = this._downsampleAnalysisPoints(
+            Array.isArray(summary.sample)
+                ? summary.sample
+                    .map((point) => this._normalizeAnalysisPoint(point))
+                    .filter(Boolean)
+                : [],
+            maxSamplePoints
+        );
+
+        const start = this._normalizeAnalysisPoint(summary.start) || sample[0] || null;
+        const end = this._normalizeAnalysisPoint(summary.end) || sample[sample.length - 1] || start;
+        const latest = this._normalizeAnalysisPoint(summary.latest) || end;
+
+        const count = this._toFiniteNumber(summary.count) || sample.length;
+        const min = this._toFiniteNumber(summary.min);
+        const max = this._toFiniteNumber(summary.max);
+        const avg = this._toFiniteNumber(summary.avg);
+        const delta = this._toFiniteNumber(summary.delta);
+
+        if (!start && !end && sample.length === 0 && min == null && max == null && avg == null) {
+            return null;
+        }
+
+        return {
+            count,
+            min,
+            max,
+            avg,
+            start,
+            end,
+            latest,
+            delta: delta != null ? delta : (start && end ? end.value - start.value : null),
+            sample,
+        };
+    }
+
+    _summarizeAnalysisPoints(points, maxSamplePoints) {
+        const normalizedPoints = (points || [])
+            .map((point) => this._normalizeAnalysisPoint(point))
+            .filter(Boolean)
+            .sort((left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime());
+
+        if (normalizedPoints.length === 0) {
+            return null;
+        }
+
+        const values = normalizedPoints.map((point) => point.value);
+        const start = normalizedPoints[0];
+        const end = normalizedPoints[normalizedPoints.length - 1];
+
+        return {
+            count: normalizedPoints.length,
+            min: Math.min(...values),
+            max: Math.max(...values),
+            avg: values.reduce((sum, value) => sum + value, 0) / values.length,
+            start,
+            end,
+            latest: end,
+            delta: end.value - start.value,
+            sample: this._downsampleAnalysisPoints(normalizedPoints, maxSamplePoints),
+        };
+    }
+
+    _downsampleAnalysisPoints(points, maxPoints) {
+        if (!Array.isArray(points) || points.length <= maxPoints) {
+            return points;
+        }
+
+        if (maxPoints <= 1) {
+            return [points[points.length - 1]];
+        }
+
+        const lastIndex = points.length - 1;
+        const sampled = [];
+
+        for (let index = 0; index < maxPoints; index += 1) {
+            const pointIndex = Math.round((index * lastIndex) / (maxPoints - 1));
+            sampled.push(points[pointIndex]);
+        }
+
+        return sampled;
+    }
+
+    _normalizeAnalysisPoint(point) {
+        if (!point || typeof point !== 'object') {
+            return null;
+        }
+
+        const timestamp = this._toIsoTimestamp(point.timestamp);
+        const value = this._toFiniteNumber(point.value);
+
+        if (!timestamp || value == null) {
+            return null;
+        }
+
+        return { timestamp, value };
+    }
+
+    _toFiniteNumber(value) {
+        const numericValue = Number(value);
+        return Number.isFinite(numericValue) ? numericValue : null;
+    }
+
+    _toIsoTimestamp(value) {
+        const timestamp = new Date(value).getTime();
+        return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
     }
 }
 

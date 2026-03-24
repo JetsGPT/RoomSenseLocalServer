@@ -129,7 +129,7 @@ import ruleEngine from './services/notifications/RuleEngine.js';
 import sensorDataService from './services/SensorDataService.js';
 import aiService from './services/AiService.js';
 import { startGatewayClient } from "./gatewayClient.js";
-app.use(express.json());
+app.use(express.json({ limit: '512kb' }));
 
 // Make pool available to middlewares
 app.locals.pool = pool;
@@ -345,6 +345,13 @@ app.get('*', (req, res) => {
 
 // Error handler for CSRF
 app.use((err, req, res, next) => {
+    if (err.type === 'entity.too.large') {
+        return res.status(413).json({
+            error: 'Request payload too large',
+            details: 'The request exceeded the RoomSense server size limit before analysis could start.'
+        });
+    }
+
     if (err.code === 'EBADCSRFTOKEN') {
         return res.status(403).json({ error: 'Invalid or missing CSRF token' });
     }
