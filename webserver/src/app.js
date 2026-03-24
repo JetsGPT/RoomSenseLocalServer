@@ -250,11 +250,6 @@ app.get('/api/csrf-token', csrfProtection, (req, res) => {
 
 // Apply DB-backed permissions and rate limiting ONLY to API routes, EXCLUDING health endpoints
 app.use('/api', (req, res, next) => {
-    res.setHeader('Cache-Control', 'no-store');
-    next();
-});
-
-app.use('/api', (req, res, next) => {
     const skipPaths = ['/health', '/devices/health', '/sensors', '/sensors/'];
     if (skipPaths.includes(req.path)) return next();
     ratePermissions()(req, res, next);
