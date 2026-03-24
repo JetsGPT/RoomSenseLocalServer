@@ -77,8 +77,34 @@ async function waitForDatabase(pool, maxRetries = 15, delayMs = 2000) {
     process.exit(1);
 }
 
+async function ensureBaselineAnonymousPermissions(pool) {
+    const rules = [
+        ['anonymous', '*', '/','prefix', false, 0, 0],
+        ['anonymous', 'POST', '/api/users/register', 'exact', true, 10, 60000],
+        ['anonymous', 'POST', '/api/users/login', 'exact', true, 20, 60000],
+        ['anonymous', 'GET', '/api/setup/bootstrap', 'exact', true, 60, 60000],
+        ['anonymous', 'POST', '/api/setup/initial-account', 'exact', true, 10, 60000],
+    ];
+
+    try {
+        await pool.query('INSERT INTO public.roles(name) VALUES($1) ON CONFLICT (name) DO NOTHING', ['anonymous']);
+
+        for (const [role, method, pathPattern, matchType, allow, rateLimitMax, rateLimitWindowMs] of rules) {
+            await pool.query(
+                `INSERT INTO public.permissions(role, method, path_pattern, match_type, allow, rate_limit_max, rate_limit_window_ms)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                 ON CONFLICT (role, method, path_pattern, match_type) DO NOTHING`,
+                [role, method, pathPattern, matchType, allow, rateLimitMax, rateLimitWindowMs]
+            );
+        }
+    } catch (error) {
+        console.warn('[Startup] Failed to ensure baseline anonymous permissions:', error.message || error);
+    }
+}
+
 // Block startup until DB is ready
 await waitForDatabase(pool);
+await ensureBaselineAnonymousPermissions(pool);
 
 //---------
 

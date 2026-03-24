@@ -5,14 +5,12 @@ import { requireLogin } from '../auth/auth.js';
 
 const router = express.Router();
 
-router.use(requireLogin);
-
 /**
  * Helper to check if setup is already completed.
  */
-async function isSetupCompleted(pool) {
+async function isSetupCompleted(db) {
     try {
-        const result = await pool.query("SELECT value FROM system_settings WHERE key = 'setup_completed'");
+        const result = await db.query("SELECT value FROM system_settings WHERE key = 'setup_completed'");
         if (result.rows.length > 0) {
             return result.rows[0].value === 'true';
         }
@@ -22,6 +20,133 @@ async function isSetupCompleted(pool) {
         return false;
     }
 }
+
+async function getUserCount(db) {
+    try {
+        const result = await db.query('SELECT COUNT(*)::int AS c FROM users');
+        return result.rows?.[0]?.c ?? 0;
+    } catch (err) {
+        // If the table is not ready yet, treat it as a first install.
+        return 0;
+    }
+}
+
+async function getBootstrapState(db) {
+    const [setupCompleted, userCount] = await Promise.all([
+        isSetupCompleted(db),
+        getUserCount(db),
+    ]);
+    const hasUsers = userCount > 0;
+
+    return {
+        setupCompleted,
+        hasUsers,
+        firstInstall: !setupCompleted && !hasUsers,
+    };
+}
+
+/**
+ * GET /api/setup/bootstrap
+ * Returns the setup and account bootstrap state without requiring login.
+ */
+router.get('/bootstrap', async (req, res) => {
+    try {
+        const pool = req.app.locals.pool;
+        if (!pool) {
+            return res.status(503).json({ error: 'Database not initialized' });
+        }
+
+        const state = await getBootstrapState(pool);
+        res.status(200).json(state);
+    } catch (error) {
+        console.error('[Setup] Error building bootstrap state:', error);
+        res.status(500).json({ error: 'Failed to load setup bootstrap state' });
+    }
+});
+
+/**
+ * POST /api/setup/initial-account
+ * Creates the first admin account during the first-install setup flow and starts a session.
+ */
+router.post('/initial-account', async (req, res) => {
+    const username = typeof req.body?.user === 'string' ? req.body.user.trim() : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+
+    if (!username || !password) {
+        return res.status(400).json({ error: 'user and password are required' });
+    }
+
+    const pool = req.app.locals.pool;
+    if (!pool) {
+        return res.status(503).json({ error: 'Database not initialized' });
+    }
+
+    const client = await pool.connect();
+
+    try {
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock($1)', [424244]);
+
+        const bootstrapState = await getBootstrapState(client);
+        if (bootstrapState.setupCompleted) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'Setup is already completed.' });
+        }
+
+        if (bootstrapState.hasUsers) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'The initial account already exists. Sign in to continue setup.' });
+        }
+
+        await client.query('INSERT INTO roles(name) VALUES($1) ON CONFLICT (name) DO NOTHING', ['admin']);
+        await client.query('INSERT INTO roles(name) VALUES($1) ON CONFLICT (name) DO NOTHING', ['user']);
+
+        const result = await client.query(
+            'INSERT INTO users (username, password, role, created_at) VALUES ($1, $2, $3, NOW()) RETURNING id, username, role, created_at',
+            [username, password, 'admin']
+        );
+
+        await client.query('COMMIT');
+
+        const createdUser = result.rows?.[0];
+        req.session.user = {
+            id: createdUser.id,
+            username: createdUser.username,
+            role: createdUser.role,
+        };
+
+        req.session.save((sessionError) => {
+            if (sessionError) {
+                console.error('[Setup] Initial account session save failed:', sessionError);
+                return res.status(500).json({ error: 'Initial account was created, but the session could not be started.' });
+            }
+
+            res.status(201).json({
+                user: createdUser,
+                setupCompleted: false,
+                hasUsers: true,
+                firstInstall: false,
+            });
+        });
+    } catch (error) {
+        try {
+            await client.query('ROLLBACK');
+        } catch (rollbackError) {
+            console.error('[Setup] Failed to roll back initial account transaction:', rollbackError);
+        }
+
+        console.error('[Setup] Error creating initial account:', error);
+        if (error?.code === '23505') {
+            return res.status(409).json({ error: 'Username already exists' });
+        }
+
+        res.status(500).json({ error: 'Failed to create initial setup account' });
+    } finally {
+        client.release();
+    }
+});
+
+router.use(requireLogin);
 
 /**
  * GET /api/setup/status
@@ -33,8 +158,8 @@ router.get('/status', async (req, res) => {
         if (!pool) {
              return res.status(503).json({ error: 'Database not initialized' });
         }
-        const completed = await isSetupCompleted(pool);
-        res.status(200).json({ completed });
+        const bootstrapState = await getBootstrapState(pool);
+        res.status(200).json({ completed: bootstrapState.setupCompleted });
     } catch (error) {
         console.error('[Setup] Error checking status:', error);
         res.status(500).json({ error: 'Failed to check setup status' });

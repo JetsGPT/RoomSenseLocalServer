@@ -111,7 +111,9 @@ ON CONFLICT (role, method, path_pattern, match_type) DO NOTHING;
 INSERT INTO public.permissions(role, method, path_pattern, match_type, allow, rate_limit_max, rate_limit_window_ms)
 VALUES
 ('anonymous','POST','/api/users/register','exact', true, 10, 60000),
-('anonymous','POST','/api/users/login','exact', true, 20, 60000)
+('anonymous','POST','/api/users/login','exact', true, 20, 60000),
+('anonymous','GET','/api/setup/bootstrap','exact', true, 60, 60000),
+('anonymous','POST','/api/setup/initial-account','exact', true, 10, 60000)
 ON CONFLICT (role, method, path_pattern, match_type) DO NOTHING;
 
 -- User: allow sensors API with reasonable limits
