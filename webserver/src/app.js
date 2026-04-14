@@ -79,7 +79,7 @@ async function waitForDatabase(pool, maxRetries = 15, delayMs = 2000) {
 
 async function ensureBaselineAnonymousPermissions(pool) {
     const rules = [
-        ['anonymous', '*', '/','prefix', false, 0, 0],
+        ['anonymous', '*', '/', 'prefix', false, 0, 0],
         ['anonymous', 'POST', '/api/users/register', 'exact', true, 10, 60000],
         ['anonymous', 'POST', '/api/users/login', 'exact', true, 20, 60000],
         ['anonymous', 'GET', '/api/setup/bootstrap', 'exact', true, 60, 60000],
@@ -185,6 +185,20 @@ app.use(cors({
             'https://proxy.roomsense.info:8443',
             'https://100.76.205.69' // nur Vorübergehend für Tailscale
         ];
+
+        try {
+            const identityPath = path.join(__dirname, 'server_identity.json');
+            if (fs.existsSync(identityPath)) {
+                const identityData = JSON.parse(fs.readFileSync(identityPath, 'utf8'));
+                if (identityData.box_id) {
+                    allowedOrigins.push(`https://proxy.roomsense.info:8443/proxy/${identityData.box_id}`);
+                } else if (identityData.server_id) {
+                    allowedOrigins.push(`https://proxy.roomsense.info:8443/proxy/${identityData.server_id}`);
+                }
+            }
+        } catch (e) {
+            console.error('[CORS] Failed to read server_identity.json:', e.message);
+        }
 
         const isAllowed = allowedOrigins.some(allowedOrigin => {
             if (typeof allowedOrigin === 'string') {
