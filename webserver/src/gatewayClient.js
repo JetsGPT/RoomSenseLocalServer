@@ -11,7 +11,7 @@ const __dirname = path.dirname(__filename);
 
 const IDENTITY_FILE = path.join(__dirname, '../server_identity.json'); //this is only for testing purposes
 const GATEWAY_URL = process.env.GATEWAY_URL || 'wss://proxy.roomsense.info:8443/ws/gateway';
-const LOCAL_API_URL = 'https://localhost:8081'; // Where Express is running locally
+const LOCAL_API_URL = process.env.LOCAL_API_URL || 'https://localhost:8081'; // Where Express is running locally
 
 function getIdentity() {
     if (fs.existsSync(IDENTITY_FILE)) {
@@ -112,7 +112,7 @@ export function startGatewayClient() {
                     data: body,
                     params: new URLSearchParams(query),
                     validateStatus: () => true,
-                    httpsAgent: agent 
+                    httpsAgent: agent
                 });
 
                 ws.send(JSON.stringify({

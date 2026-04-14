@@ -661,7 +661,7 @@ router.delete('/known_devices/:address', authMiddleware, async (req, res) => {
         }
 
         const data = await response.json();
-        
+
         // Also remove it from DB or mark inactive so name overlay isn't stale
         if (pool) {
             try {
@@ -673,7 +673,7 @@ router.delete('/known_devices/:address', authMiddleware, async (req, res) => {
                 console.error(`[BLE] Failed to update connection in DB upon forget:`, dbError);
             }
         }
-        
+
         return res.status(200).json(data);
     } catch (error) {
         console.error('Error forgetting device:', error);
